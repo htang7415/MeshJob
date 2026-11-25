@@ -134,6 +134,7 @@ caption{text-align:left;padding:10px 14px;color:var(--muted)}
 .detail-list{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:0;font-size:.89rem}
 .detail-list dt{color:var(--muted)}
 .detail-list dd{margin:0;overflow-wrap:anywhere}
+.job-description{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px}
 .profile-nav{display:grid;gap:4px}
 .profile-nav a{color:var(--muted);font-size:.9rem;text-decoration:none;padding:5px}
 .profile-nav a:hover{color:var(--accent)}

@@ -40,6 +40,9 @@ export function distinctValues(value) {
 export const validDate = value => !!value && typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value) && Number.isFinite(Date.parse(value));
 export const exactDate = value => validDate(value) && /T\d{2}:\d{2}.*(?:Z|[+-]\d\d:\d\d)$/i.test(value) && Date.parse(value) <= Date.now();
 export const uid = () => crypto.randomUUID();
+export const JOB_DESCRIPTION_LIMIT = 48_000;
+export const workdayTenant = host => /^([\w-]+)\.wd\d+\.myworkdayjobs\.com$/.exec(host)?.[1];
+export const workdayEmployer = host => host==='jda.wd5.myworkdayjobs.com'?'Blue Yonder':'';
 export async function hash(value) {
   const data = typeof value === 'string' ? new TextEncoder().encode(value) : value;
   return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', data)), n => n.toString(16).padStart(2, '0')).join('');

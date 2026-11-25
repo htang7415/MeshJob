@@ -84,8 +84,10 @@ test('CSV round-trips Unicode, formulas, quotes, multiline notes and skips dupli
   assert.equal(restored.company,application.company);
   assert.equal(restored.appliedAt,'2026-11-20T01:00:00.000Z');
 });
-test('backup round-trip preserves linked history, material PDF, and strips credentials and Gmail config',async()=>{
-  const {application}=await saveApplication(fixtureJob);
+test('backup round-trip preserves linked history, job description, PDF, and strips credentials and Gmail config',async()=>{
+  const description='Design APIs.\nVerify releases.';
+  const {application}=await saveApplication(fixtureJob,{pageDescription:description});
+  await saveApplication(fixtureJob,{existingId:application.id,pageDescription:'Revised posting'});
   await changeStage(application.id,'Applied');
   await db.settings.put({id:'settings',profile:{givenName:'Example',unknown:'secret'},gmail:true,markRead:true,claudeKey:'not-a-real-key',password:'sentinel'});
   const material=await storeMaterial({file:new File(['%PDF-1.4\n%%EOF'],'resume.pdf',{type:'application/pdf'}),text:'An example',type:'resume'});
@@ -93,11 +95,13 @@ test('backup round-trip preserves linked history, material PDF, and strips crede
   const pack=await previewBackup(backup);
   assert.equal(pack.records.settings.profile.givenName,'Example');
   assert.equal(pack.records.settings.profile.unknown,undefined);
+  assert.equal(pack.records.applications[0].jobDescription,description);
   assert.equal('claudeKey' in pack.records.settings,false);
   assert.equal('gmail' in pack.records.settings,false);
   assert.equal(pack.records.materials[0].hash,material.item.hash);
   assert.equal(await pack.records.materials[0].blob.text(),'%PDF-1.4\n%%EOF');
   assert.equal((await restoreBackup(pack,'replace')).applications,1);
+  assert.equal((await db.applications.get(application.id)).jobDescription,description);
   assert.equal((await settings()).mode,'Paused');
   assert.equal((await db.events.where('applicationId').equals(application.id).toArray()).length,2);
   assert.equal((await restoreBackup(pack,'merge')).applications,0);

@@ -1,4 +1,4 @@
-import { canonicalUrl, distinctValues, normalized, trim } from './domain.js';
+import { canonicalUrl, distinctValues, JOB_DESCRIPTION_LIMIT, normalized, trim, workdayEmployer, workdayTenant } from './domain.js';
 import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECTORS } from './form-rules.js';
 
 (() => {
@@ -43,15 +43,23 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
       try { posting ||= find(JSON.parse(tag.textContent)); } catch { /* External markup. */ }
     }
     const provider = providerOf();
+    const host = location.hostname;
     const segments = location.pathname.split('/').filter(Boolean);
     const title = posting?.title || first('[data-automation-id="jobPostingHeader"]','h1.app-title','.posting-headline h2','.section-wrapper h2','main h1','h1','h2')?.textContent || first('meta[property="og:title"]')?.content || doc.title || '';
-    const company = posting?.hiringOrganization?.name || first('meta[property="og:site_name"]')?.content ||
-      (provider==='workday'?location.hostname.split('.')[0]:provider!=='generic'?segments[0]:'');
+    const siteName = first('meta[property="og:site_name"]')?.content;
+    const tenant = workdayTenant(host);
+    const logoName = provider==='workday' ? first('[data-automation-id="logoLink"] img[alt]')?.alt.replace(/\s+search for jobs$/i,'') : '';
+    const company = provider==='workday' ? [posting?.hiringOrganization?.name,siteName,workdayEmployer(host),logoName].map(trim)
+      .find(name=>name && normalized(name)!==normalized(tenant) && !/^(?:workday|logo|careers|search for jobs)$/i.test(name)) :
+      posting?.hiringOrganization?.name || siteName || (provider!=='generic'?segments[0]:'');
+    const descriptionHtml = typeof posting?.description==='string' ? posting.description.slice(0,300_000) : '';
+    const description = first('[data-automation-id="jobPostingDescription"]');
+    const jd = provider==='workday' && visible(description) ? description.innerText.trim().slice(0,JOB_DESCRIPTION_LIMIT) : '';
     return {
       url:canonicalUrl(expectedUrl()),provider,title:trim(title).slice(0,240),company:trim(company).slice(0,160),
       requisition:trim(posting?.identifier?.value || first('[data-automation-id="jobReqId"]')?.textContent).slice(0,120),
       location:trim(posting?.jobLocation?.address?.addressLocality || first('.location','[data-automation-id="locations"]')?.textContent).slice(0,240),
-      attribution:location.hostname
+      attribution:host,jd,descriptionHtml
     };
   }
   function groupOf(node) {

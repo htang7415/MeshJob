@@ -19,8 +19,9 @@ const green='https://job-boards.greenhouse.io';
 const ashby='https://jobs.ashbyhq.com';
 const lever='https://jobs.lever.co';
 const workday='https://meshjob-fixture.wd5.myworkdayjobs.com';
+const blueYonder='https://jda.wd5.myworkdayjobs.com';
 const mockBoard='https://boards-api.greenhouse.io';
-const domains=[green,ashby,lever,workday,mockBoard];
+const domains=[green,ashby,lever,workday,blueYonder,mockBoard];
 const slug='meshjob-fixture';
 const id='13e1e478-6330-47c5-9fb0-d07889111cc2';
 const urls={
@@ -333,6 +334,14 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
       const value=new URL(route.request().url());
       if(route.request().method()!=='GET'){metrics.externalApplicationRequests++;await route.abort();return;}
       if(value.origin===mockBoard){hits++;await route.fulfill({json:{jobs:[]}});return;}
+      if(value.origin===blueYonder) {
+        await route.fulfill({status:200,contentType:'text/html',body:`<!doctype html><title>Job listing - Logo</title>
+          <a data-automation-id="logoLink"><img alt="Logo search for jobs"></a>
+          <h1 data-automation-id="jobPostingHeader">Backend Engineer</h1><span data-automation-id="jobReqId">263328</span>
+          <script type="application/ld+json">{"@type":"JobPosting","title":"Backend Engineer","hiringOrganization":{"name":""},"description":"<p>Design APIs and verify releases.</p>"}</script>
+          <div data-automation-id="jobPostingDescription"><p>Design APIs and verify releases.</p><div>Unrelated overlay</div></div>`});
+        return;
+      }
       const provider=Object.keys(urls).find(key=>urls[key].startsWith(value.origin));
       const variant=Number(value.searchParams.get('variant')??0);
       metrics.sandboxRequests++;
@@ -427,7 +436,7 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
     await panelTarget.bringToFront();
     await panel.getByRole('button',{name:'Prepare application'}).waitFor({timeout:7000});
     await panel.getByRole('button',{name:'Prepare application'}).click();
-    await panel.getByRole('button',{name:'Save preparing draft'}).click();
+    await panel.getByRole('button',{name:'Save draft'}).click();
     await panel.getByRole('button',{name:'Fill available fields'}).click();
     await panel.getByRole('heading',{name:'Review autofill'}).waitFor();
     assert.equal(await panelTarget.locator('#email').inputValue(),defaultConfig.profile.email);
@@ -439,12 +448,33 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
     await guidedTarget.goto(urls.workday.replace('_R123','_R650')+'?multi=1');
     await guidedTarget.bringToFront();
     await panel.getByRole('button',{name:'Prepare application'}).click();
-    await panel.getByRole('button',{name:'Save preparing draft'}).click();
+    const employer=panel.getByLabel('Company',{exact:true});
+    assert.equal(await employer.inputValue(),'');
+    await employer.fill('Sandbox Employer');
+    await panel.getByRole('button',{name:'Save draft'}).click();
     await panel.getByRole('button',{name:'Fill to review'}).click();
     await guidedTarget.locator('#final').waitFor();
     assert.equal(await guidedTarget.evaluate(()=>window.meshjobSubmits),0);
     metrics.guidedReachedReview=true;
-    await guidedTarget.close();await panel.close();
+    await guidedTarget.close();
+
+    const listing=await context.newPage();
+    await listing.goto(blueYonder+'/JDA_Careers/job/Dallas/Backend-Engineer_263328-1');
+    await listing.bringToFront();
+    await panel.getByText('Blue Yonder',{exact:true}).waitFor();
+    await panel.getByRole('button',{name:'Prepare application'}).click();
+    assert.equal(await panel.getByLabel('Company',{exact:true}).inputValue(),'Blue Yonder');
+    assert.equal(await panel.getByLabel('Requisition ID').inputValue(),'263328');
+    await panel.getByText(/Job description detected/).waitFor();
+    await panel.getByRole('button',{name:'Save draft'}).click();
+    await panel.getByText('Preparing draft saved.',{exact:true}).waitFor();
+    assert.equal(await listing.url(),blueYonder+'/JDA_Careers/job/Dallas/Backend-Engineer_263328-1');
+    await listing.close();await panel.close();
+    await dashboard.getByRole('link',{name:'Tracker',exact:true}).click();
+    await dashboard.getByRole('button',{name:'Backend Engineer',exact:true}).click();
+    await dashboard.getByText('Job description',{exact:true}).click();
+    assert.equal(await dashboard.locator('.job-description').innerText(),'Design APIs and verify releases.');
+    await dashboard.getByRole('button',{name:'Close',exact:true}).first().click();
 
     await rpc(dashboard,'secret:claude',{key:testToken});
     const zipBytes=await dashboard.evaluate(async ()=>{

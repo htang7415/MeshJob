@@ -1,5 +1,5 @@
 import { parseDocument, DomUtils } from 'htmlparser2';
-import { canonicalUrl, publicUrl, hasJobPath, exactDate, trim } from './domain.js';
+import { canonicalUrl, publicUrl, hasJobPath, exactDate, JOB_DESCRIPTION_LIMIT, trim, workdayEmployer } from './domain.js';
 
 const { findAll, findOne, textContent } = DomUtils;
 const pathToken = /^[\w.-]{1,100}$/;
@@ -29,7 +29,7 @@ export function plain(html) {
       return blocks.has(node.name) ? '\n' + content + '\n' : content;
     }).join(' ');
   }
-  return read(doc.children).split('\n').map(trim).filter(Boolean).join('\n').slice(0, 48_000);
+  return read(doc.children).split('\n').map(trim).filter(Boolean).join('\n').slice(0, JOB_DESCRIPTION_LIMIT);
 }
 
 export function detectSource(value, hint = '') {
@@ -68,7 +68,7 @@ export function detectSource(value, hint = '') {
   }
   if (!tenant || (['greenhouse','ashby','lever','workday'].includes(provider) && !pathToken.test(tenant)) || (provider === 'workday' && !pathToken.test(site))) throw new Error('Could not identify the board. Paste its public Careers URL.');
   const id = [provider, tenant, site ?? ''].join(':').toLowerCase();
-  return { id, url:canonicalUrl(url.href), provider, tenant, site, endpoint, name:tenant,
+  return { id, url:canonicalUrl(url.href), provider, tenant, site, endpoint, name:workdayEmployer(hostname)||tenant,
     interval:10, enabled:true, origin:new URL(endpoint).origin };
 }
 

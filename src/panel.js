@@ -1,5 +1,5 @@
 import { db, settings } from './db.js';
-import { canonicalUrl, httpUrl, normalized } from './domain.js';
+import { canonicalUrl, httpUrl, normalized, workdayTenant } from './domain.js';
 import { createFillPlan, PROFILE_KEYS } from './form-rules.js';
 import { postingIdentity } from './sources.js';
 import { changeStage, findJob, saveApplication } from './tracker.js';
@@ -69,11 +69,17 @@ async function grant() {
   await permit([current.origin+'/*']);
   await scan();
 }
+function draftCompany(existing) {
+  const found=state.inspection?.job;
+  const tenant=workdayTenant(httpUrl(found?.url)?.hostname);
+  return [existing?.company,found?.company,state.job?.company]
+    .find(name=>name && (!tenant || normalized(name)!==normalized(tenant)))??'';
+}
 function getDraftInputs(existing) {
   const j=state.job??state.inspection?.job??{};
   const from=state.inspection?.job??{};
   return {
-    company:input('company',existing?.company??j.company??'',{required:true,autocomplete:'off'}),
+    company:input('company',draftCompany(existing),{required:true,placeholder:'Enter company name'}),
     title:input('title',existing?.title??j.title??'',{required:true,autocomplete:'off'}),
     url:input('url',existing?.url??j.url??from.url??state.tab?.url??'',{type:'url'}),
     location:input('location',existing?.location??j.location??''),
@@ -83,18 +89,18 @@ function getDraftInputs(existing) {
 }
 async function prepare() {
   const recent=(await db.applications.toArray()).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,200);
-  const f=getDraftInputs(state.related);
-  const empty=['','Create or match by exact job identity'];
-  const association=select('existing',[empty,...recent.map(row=>[row.id,row.company+' · '+row.title])],state.related?.id??'');
+  const {inspection,tab,related}=state;
+  const f=getDraftInputs(related);
+  const association=select('existing',[['','Use this job'],...recent.map(row=>[row.id,row.company+' · '+row.title])],related?.id??'');
   formDialog('Prepare application',[
-    state.related&&el('div',{class:'notice alert'},'This requisition is already tracked as '+state.related.status+'.'),
-    field('Tracked application',association),
+    related&&el('div',{class:'notice alert'},'This requisition is already tracked as '+related.status+'.'),
+    recent.length>0&&field('Tracked application',association),
     el('div',{class:'form-grid'},field('Company',f.company),field('Job title',f.title),field('Job URL',f.url),
-      field('Requisition ID',f.requisition),field('Location',f.location),field('Source',f.attribution))
+      field('Requisition ID',f.requisition),field('Location',f.location),field('Source',f.attribution)),
+    inspection?.job.jd&&paragraph('Job description detected. A copy can be saved locally with this application.','meta')
   ],async values=>{
-    const inspection=state.inspection;
     const {existing,...job}=values;
-    if(existing&&existing!==state.related?.id) {
+    if(existing&&existing!==related?.id) {
       const row=await db.applications.get(existing);
       if(!row)throw new Error('The selected application was removed.');
       Object.assign(job,{company:row.company,title:row.title,url:row.url,requisition:row.requisition,location:row.location,attribution:row.source});
@@ -106,12 +112,12 @@ async function prepare() {
       return;
     }
     if(!job.url) job.url=inspection.page;
-    const result=await rpc('form:prepare',{tabId:state.tab.id,inspection,job,existingId:existing});
+    const result=await rpc('form:prepare',{tabId:tab.id,inspection,job,existingId:existing});
     state.app=result.application;state.related=result.application;
     state.result=null;
     render();
     toast(result.duplicate?'Existing application opened.':result.similar?'Preparing draft saved separately from a similar role.':'Preparing draft saved.');
-  },'Save preparing draft');
+  },'Save draft');
 }
 function filePicker(type,label) {
   const items=state.materials.filter(row=>row.type===type);
@@ -234,7 +240,7 @@ function applicationView(inspection) {
   const workday=inspection.job.provider==='workday';
   const prepareRows=workday&&normalized(step)==='my experience'&&!!(state.config.profile.experience?.length||state.config.profile.education?.length);
   const title=state.app?.title||state.job?.title||inspection.job.title||'Application assistant';
-  const company=state.app?.company||state.job?.company||inspection.job.company;
+  const company=draftCompany(state.app??state.related);
   return [
     el('div',{class:'stack',style:'gap:5px'},el('h1',{},title),company&&paragraph(company),
       el('div',{class:'inline-group'},badge(inspection.job.provider==='generic'?'Generic form':inspection.job.provider),

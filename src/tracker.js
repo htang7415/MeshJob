@@ -1,5 +1,5 @@
 import { db, guarded } from './db.js';
-import { canonicalUrl, httpUrl, normalized, nowISO, STAGES, trim, uid, validDate } from './domain.js';
+import { canonicalUrl, httpUrl, JOB_DESCRIPTION_LIMIT, normalized, nowISO, STAGES, trim, uid, validDate } from './domain.js';
 import { postingIdentity } from './sources.js';
 
 const submissionProof = new Set(['ats-receipt','email-confirmation','user-confirmed','csv-confirmed']);
@@ -84,9 +84,11 @@ export async function recordEvent(event) {
   return { event:entry, application:result };
 }
 
-export async function saveApplication(raw, { stage = 'Saved', jobId = '', existingId = '' } = {}) {
+export async function saveApplication(raw, { stage = 'Saved', jobId = '', existingId = '', pageDescription = '' } = {}) {
   return db.transaction('rw',db.jobs,db.applications,db.events,async () => {
     const input = jobId ? null : describeImport(raw);
+    const userDescription = typeof raw?.jobDescription==='string' ? raw.jobDescription.trim().slice(0,JOB_DESCRIPTION_LIMIT) : undefined;
+    const capturedDescription = typeof pageDescription==='string' ? pageDescription.trim().slice(0,JOB_DESCRIPTION_LIMIT) : '';
     const existing = existingId ? await db.applications.get(existingId) : null;
     if (existingId && !existing) throw new Error('Selected application no longer exists.');
     let job = jobId ? await db.jobs.get(jobId) : existing ? await db.jobs.get(existing.jobId) : await findJob(input.keys,input.urls);
@@ -97,15 +99,19 @@ export async function saveApplication(raw, { stage = 'Saved', jobId = '', existi
     }
     const same = existing ?? await db.applications.where('jobId').equals(job.id).first();
     if (same) {
+      const jobDescription = userDescription ?? same.jobDescription ?? (capturedDescription || undefined);
       if (existing) {
         const edited = {...same,notes:String(raw?.notes ?? same.notes).slice(0,24000),
           company:input?.company ?? same.company,title:input?.title ?? same.title,location:input?.location ?? same.location,
           url:input?.url ?? same.url,requisition:input?.requisition ?? same.requisition,
+          ...(jobDescription!==undefined?{jobDescription}:{}),
           ...(raw?.source!==undefined||raw?.attribution!==undefined?{source:input.attribution}:{}),
           ...(raw?.seniority!==undefined?{seniority:input.seniority}:{}),
           ...(raw?.workMode!==undefined?{workMode:input.workMode}:{}),
           ...(raw?.priority!==undefined?{priority:input.priority}:{})};
         await db.applications.put(edited);
+      } else if (capturedDescription && same.jobDescription===undefined) {
+        await db.applications.update(same.id,{jobDescription:capturedDescription});
       }
       if (stage === 'Preparing' && same.status === 'Saved') await recordEvent({id:'prepare:'+same.id,applicationId:same.id,kind:'stage',stage});
       return {application:await db.applications.get(same.id),duplicate:true};
@@ -119,6 +125,7 @@ export async function saveApplication(raw, { stage = 'Saved', jobId = '', existi
       roleCategory:input?.roleCategory || job.roleCategory,seniority:input?.seniority || job.seniority,
       workMode:input?.workMode || job.workMode,priority:input?.priority || job.priority,employmentType:input?.employmentType || job.employmentType,
       sponsorshipStatus:job.sponsorship?.status,postedAt:job.postedAt,firstSeenAt:job.firstSeenAt,
+      jobDescription:userDescription ?? (capturedDescription || job.jd || undefined),
       createdAt:at,updatedAt:at,notes:String(raw?.notes ?? '').slice(0,24000),status:'Saved',submission:'unverified'
     };
     await db.applications.add(application);

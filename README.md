@@ -4,7 +4,7 @@ MeshJob is a local-first Chrome extension for discovering jobs, preparing applic
 
 ## Install
 
-1. Download [MeshJob 1.0.3 (ZIP)](install/MeshJob-1.0.3.zip) and extract it to a permanent folder. Keep this folder in place while using the extension.
+1. Download [MeshJob 1.0.4 (ZIP)](install/MeshJob-1.0.4.zip) and extract it to a permanent folder. Keep this folder in place while using the extension.
 2. In Chrome 120 or later, open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the extracted folder containing `manifest.json`.
 3. Pin MeshJob and click its toolbar icon. In **Discover**, choose **Set up discovery** or add a board in **Manage sources**. Grant the requested origins for the sources you choose.
 4. Add personal details, PDFs, and any verified answers in **Profile**. On an application tab, click the toolbar icon, prepare a draft, select your PDFs, and fill available fields. Review the employer’s page and submit it yourself.
@@ -19,12 +19,14 @@ For 1.0.3 and later, extract each new release over the files in your existing Me
 Versions through 1.0.2 used directory-based IDs. Chrome treats copies loaded from different folders as separate extensions, each with its own local records. To switch to the fixed ID:
 
 1. Open each old copy that contains data and choose **Profile → Local data → Download backup ZIP**. Save the files separately. You can turn off the old copies in `chrome://extensions` after exporting.
-2. Extract and load 1.0.3 in a permanent folder. In the new copy, choose **Profile → Local data → Import backup ZIP** and preview the backup from the old copy whose profile and preferences you want to keep. In a fresh installation, use **Replace all local records** to restore that backup.
+2. Extract and load the current release in a permanent folder. In the new copy, choose **Profile → Local data → Import backup ZIP** and preview the backup from the old copy whose profile and preferences you want to keep. In a fresh installation, use **Replace all local records** to restore that backup.
 3. If the other copy has records you want, import its backup using **Merge new records into this profile**. Verify the Tracker, Profile, and documents in the new copy before removing the old cards.
 
 Restored sources start disabled. Re-enable the sources you want and reconnect optional integrations in the new copy. [Chrome extension IDs](https://developer.chrome.com/docs/extensions/reference/manifest/key)
 
 ### Autofill on Workday
+
+If the listing exposes a job description, **Save draft** keeps a local copy with the application. Open the application in **Tracker → Job description** to read it, or use **Edit details** to paste it manually if the application form has no description. Full backup ZIPs include saved descriptions.
 
 1. Open the employer’s application tab and click the MeshJob toolbar icon. Chrome opens the application assistant in its side panel, whose position follows Chrome’s settings.
 2. Choose **Grant page access** if prompted. Sign in or complete any employer challenge in the page, then choose **Scan again**.
@@ -44,7 +46,7 @@ npm test
 Load `dist/` as the unpacked extension. To generate a reproducible ZIP, use a clean output directory and set `MESHJOB_ZIP`. The ZIP has fixed entry timestamps.
 
 ```sh
-MESHJOB_DIST=./dist-release MESHJOB_ZIP=./MeshJob-1.0.3.zip npm run build
+MESHJOB_DIST=./dist-release MESHJOB_ZIP=./MeshJob-1.0.4.zip npm run build
 ```
 
 The end-to-end suite uses isolated Chromium profiles. It intercepts the employer hosts for all fill and submission fixtures. Set `MESHJOB_TEST_ROOT` to a writable scratch directory. Set `PLAYWRIGHT_BROWSERS_PATH` to a reusable browser cache if your environment has one.

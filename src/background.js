@@ -5,7 +5,7 @@ import { disconnectMail, getMailToken } from './mail.js';
 import { portableConfig } from './portability.js';
 import { candidateDetails } from './discovery.js';
 import { evaluateCandidate, relevantFacts } from './intelligence.js';
-import { collect, detectSource, jsonPostings, postingIdentity } from './sources.js';
+import { collect, detectSource, jsonPostings, plain, postingIdentity } from './sources.js';
 import {
   addSources, arm, cancelOperation, claudeFor, notifyUrgent, pattern, previewSource, recordManualRun, registerSchedules, runSource,
   scopedFetch, setMode, stopMail, stopSource, testNotification, tick
@@ -301,6 +301,8 @@ const handlers={
   },
   'form:inspect':async message=>{
     const inspection=await sendForm(message.tabId,'inspect',{},true);
+    const {descriptionHtml,...job}=inspection.job;
+    inspection.job={...job,jd:descriptionHtml?plain(descriptionHtml)||job.jd:job.jd};
     const local=await tabState(message.tabId);
     if(local && local.expiresAt>Date.now() && local.origin===httpUrl(inspection.page)?.origin) {
       const identity=postingIdentity(inspection.page), prior=postingIdentity(local.url);
@@ -309,8 +311,13 @@ const handlers={
     return inspection;
   },
   'form:prepare':async message=>{
-    await sameTab(message.tabId,message.inspection.page);
-    const result=await saveApplication(message.job,{stage:'Preparing',jobId:message.jobId,existingId:message.existingId});
+    const {url:page}=await sameTab(message.tabId,message.inspection.page);
+    const target=message.existingId ? (await db.applications.get(message.existingId))?.url :
+      message.jobId ? (await db.jobs.get(message.jobId))?.url : message.job.url;
+    const key=postingIdentity(page)?.key;
+    const exact=canonicalUrl(page)===canonicalUrl(target) || !!key && key===postingIdentity(target)?.key;
+    const result=await saveApplication(message.job,{stage:'Preparing',jobId:message.jobId,existingId:message.existingId,
+      pageDescription:exact?message.inspection.job.jd:''});
     await setTabState(message.tabId,result.application,message.inspection);
     return result;
   },

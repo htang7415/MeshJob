@@ -1,6 +1,6 @@
 import { liveQuery } from 'dexie';
 import { db, settings } from './db.js';
-import { freshness, httpUrl, normalized, preferenceDecision, STAGES, uid } from './domain.js';
+import { freshness, httpUrl, JOB_DESCRIPTION_LIMIT, normalized, preferenceDecision, STAGES, uid } from './domain.js';
 import { detectSource } from './sources.js';
 import { analyze, statsPeriod } from './stats.js';
 import { changeStage, saveApplication, undoEvent } from './tracker.js';
@@ -504,7 +504,7 @@ function pickOptional(name,label,options,current) {
   const values=current&&!options.includes(current)?[...options,current]:options;
   return field(label,select(name,[['','Not set'],...values],current??''));
 }
-function applicationEditor(app) {
+function applicationEditor(app,description='') {
   const formFields={};
   for(const [name,value] of Object.entries({company:app?.company,title:app?.title,url:app?.url,requisition:app?.requisition,location:app?.location,source:app?.source})) {
     formFields[name]=input(name,value,{required:['company','title'].includes(name),type:name==='url'?'url':'text'});
@@ -524,8 +524,12 @@ function applicationEditor(app) {
     })),
     !app&&field('Current stage',select('stage',STAGES,'Saved')),
     !app&&field('Actual submission date · optional',input('date','',{type:'datetime-local'})),
-    field('Notes',textarea('notes',app?.notes??''))
+    field('Notes',textarea('notes',app?.notes??'')),
+    el('details',{},el('summary',{},'Job description'),
+      field('Job description · optional',textarea('jobDescription',description,{rows:7,maxlength:JOB_DESCRIPTION_LIMIT,
+        placeholder:'Paste the job description here'})))
   ],async values=>{
+    if(!app&&!values.jobDescription.trim()) delete values.jobDescription;
     const result=await saveApplication(values,{existingId:app?.id});
     if(result.duplicate&&!app){toast('This requisition is already tracked.');dialog.close();showApplication(result.application);return false;}
     if(!app&&values.date) {
@@ -538,7 +542,10 @@ function applicationEditor(app) {
   });
 }
 async function showApplication(app) {
-  const events=(await db.events.where('applicationId').equals(app.id).toArray()).sort((a,b)=>b.at.localeCompare(a.at));
+  const [events,job]=await Promise.all([db.events.where('applicationId').equals(app.id).toArray(),
+    app.jobDescription===undefined?db.jobs.get(app.jobId):null]);
+  events.sort((a,b)=>b.at.localeCompare(a.at));
+  const description=app.jobDescription??job?.jd??'';
   const history=events.filter(event=>event.kind!=='undo');
   const reversals=new Set(events.filter(e=>e.kind==='undo').map(e=>e.reverses));
   const {dialog}=formDialog(app.title,[
@@ -548,8 +555,9 @@ async function showApplication(app) {
       el('dt',{},'Resume'),el('dd',{},app.materials?.resume?.name||'Unknown'),
       el('dt',{},'Cover letter'),el('dd',{},app.materials?.cover?.name||'Unknown')),
     app.notes&&paragraph(app.notes),
+    description&&el('details',{},el('summary',{},'Job description'),paragraph(description,'job-description')),
     app.review&&paragraph('Conflicting stages need your review.','form-error'),
-    el('div',{class:'actions'},link('Open job',app.url,'button'),button('Edit details',()=>{dialog.close();applicationEditor(app);}),
+    el('div',{class:'actions'},link('Open job',app.url,'button'),button('Edit details',()=>{dialog.close();applicationEditor(app,description);}),
       button('Update stage',()=>{dialog.close();stageDialog(app);},'primary')),
     el('h3',{},'History'),history.length?dataTable(['Change','Date','Evidence'],history.map(e=>[
       (e.stage||e.category||e.kind)+(reversals.has(e.id)?' · Undone':''),

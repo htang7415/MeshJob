@@ -2,7 +2,7 @@ import { strToU8, strFromU8 } from 'fflate';
 import { archive } from './archive.js';
 import { z } from 'zod';
 import { db } from './db.js';
-import { DEFAULTS, PREFERENCES, STAGES, hash, httpUrl, nowISO, normalized, uid, validDate } from './domain.js';
+import { DEFAULTS, JOB_DESCRIPTION_LIMIT, PREFERENCES, STAGES, hash, httpUrl, nowISO, normalized, uid, validDate } from './domain.js';
 import { detectSource } from './sources.js';
 import { describeImport, findJob, recordEvent } from './tracker.js';
 
@@ -211,7 +211,7 @@ const tracking=z.object({
   id,jobId:id,company:z.string().min(1).max(240),title:z.string().min(1).max(300),url:publicLink.optional(),createdAt:date,updatedAt:date,
   ...dates(['firstSeenAt','appliedAt','postedAt']),status,submission:z.enum(['unverified','submitted','confirmed','needs_check']),
   ...textual(['requisition','location','source','roleCategory','seniority','workMode','employmentType','sponsorshipStatus','priority']),
-  notes:z.string().max(24000).optional(),materials:refs.optional(),review:z.boolean().optional()
+  notes:z.string().max(24000).optional(),jobDescription:z.string().max(JOB_DESCRIPTION_LIMIT).optional(),materials:refs.optional(),review:z.boolean().optional()
 });
 const event=z.object({
   id,applicationId:id.optional(),messageId:z.string().regex(/^[\w-]{1,150}$/).optional(),threadId:z.string().regex(/^[\w-]{1,150}$/).optional(),
@@ -228,7 +228,7 @@ const job=z.object({
   ...textual(['provider','externalId','requisition','location','locationDetails','workMode','employmentType','seniority','attribution','roleCategory','postingLabel','evidence','jdHash','matchKey'],500),
   ...dates(['postedAt','updatedAt','lastAbsentAt','closedAt','reopenedAt','notifiedAt','jdAt','jdUpdatedAt']),firstSeenAt:date,
   active:z.boolean(),official:z.boolean(),manual:z.boolean().optional(),lead:z.boolean().optional(),hidden:z.boolean().optional(),identityReview:z.boolean().optional(),
-  jd:z.string().max(48_000).nullish(),members:z.record(z.string(),z.object({active:z.boolean(),key:z.string(),official:z.boolean().optional(),firstSeenAt:date.optional(),lastSeenAt:date.optional()})),
+  jd:z.string().max(JOB_DESCRIPTION_LIMIT).nullish(),members:z.record(z.string(),z.object({active:z.boolean(),key:z.string(),official:z.boolean().optional(),firstSeenAt:date.optional(),lastSeenAt:date.optional()})),
   dateEvidence:z.object({date:z.string(),kind:z.string().optional(),url:publicLink}).optional(),
   salary:z.object({min:z.number().nullable(),max:z.number().nullable(),currency:z.string(),period:z.string()}).nullish(),
   sponsorship:z.object({status:z.string(),items:z.array(z.object({status:z.string(),scope:z.string(),text:z.string().max(1500),url:publicLink.optional(),kind:z.string().optional(),date:z.string().optional()})).max(100)}).optional(),
@@ -336,7 +336,10 @@ export async function restoreBackup(snapshot,mode) {
     for (const app of records.applications) {
       const link=mappedJobs.get(app.jobId);
       const existing=await db.applications.where('jobId').equals(link).first();
-      if (existing) {mappedApps.set(app.id,existing.id);continue;}
+      if (existing) {
+        if(existing.jobDescription===undefined&&app.jobDescription) await db.applications.update(existing.id,{jobDescription:app.jobDescription});
+        mappedApps.set(app.id,existing.id);continue;
+      }
       const key=await db.applications.get(app.id)?uid():app.id;
       mappedApps.set(app.id,key);
       await db.applications.add({...app,id:key,jobId:link});count.applications++;
