@@ -14,7 +14,10 @@ The toolbar opens the Dashboard on general pages and the Side Panel on recognize
 
 ### Update an existing installation
 
-For 1.0.3 and later, extract each new release over the files in your existing MeshJob folder. In `chrome://extensions`, click **Reload** on the installed MeshJob card. The official builds share a fixed extension ID.
+Official releases starting with 1.0.3 share a fixed extension ID. Use the same Chrome profile when updating.
+
+- **Update with a ZIP.** With **Developer mode** on, drop the release ZIP onto `chrome://extensions`. Desktop Chrome extracts it to a folder it manages. [Chromium ZIP installer](https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/browser/extensions/api/developer_private/developer_private_functions.cc#1091)
+- **Keep your current folder.** Extract the ZIP and replace the files in the folder Chrome already loads, including `manifest.json`. The new version takes effect the next time you quit and reopen Chrome. For an immediate update, click **Reload** on the installed MeshJob card.
 
 Versions through 1.0.2 used directory-based IDs. Chrome treats copies loaded from different folders as separate extensions, each with its own local records. To switch to the fixed ID:
 
