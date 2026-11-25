@@ -25,7 +25,7 @@ const columns = {
   Resume:['resume_name','resume','résumé'],
   Cover:['cover_letter_name','cover letter'],
   Category:['role_category','category'],
-  Seniority:['seniority'],
+  'Experience level':['seniority','experience level','level'],
   WorkMode:['work_mode','work mode'],
   Employment:['employment_type','employment type'],
   Sponsorship:['sponsorship_status','sponsorship status'],
@@ -85,7 +85,7 @@ export function csvPreview(text,{mapping,unescape=false}={}) {
       if(row.length!==head.length) throw new Error('Column count does not match the header.');
       const get=key=>row[slots.get(mapping[key])]??'';
       const item=describeImport({company:get('Company'),title:get('Title'),url:get('URL'),requisition:get('Requisition'),location:get('Location'),
-        source:get('Source'),roleCategory:get('Category'),seniority:get('Seniority'),workMode:get('WorkMode'),employmentType:get('Employment')});
+        source:get('Source'),roleCategory:get('Category'),seniority:get('Experience level'),workMode:get('WorkMode'),employmentType:get('Employment')});
       const checkDate=key=>{
         const val=get(key).trim();
         if (val && !Number.isFinite(Date.parse(val))) throw new Error(key+' has an invalid date.');
@@ -185,9 +185,9 @@ const configSchema=z.object({
   ]))).optional(),
   profile:z.object({
     ...Object.fromEntries(['givenName','familyName','fullName','preferredName','email','phone','phoneCountry','address1','address2','city','region','postal','country','linkedin','website','github','currentEmployer','currentTitle','summary'].map(key=>[key,z.string().max(12000).optional()])),
-    skills:listSetting.optional(),
+    skills:z.array(z.string().max(240)).max(500).optional(),
     education:z.array(z.object(Object.fromEntries(['school','degree','field','gpa','start','end'].map(key=>[key,z.string().max(500).optional()])))).max(80).optional(),
-    experience:z.array(z.object(Object.fromEntries(['employer','title','start','end','location','description'].map(key=>[key,z.string().max(12000).optional()])))).max(80).optional()
+    experience:z.array(z.object({...Object.fromEntries(['employer','title','start','end','location','description'].map(key=>[key,z.string().max(12000).optional()])),current:z.boolean().optional()})).max(80).optional()
   }).optional(),
   onboarded:z.boolean().optional(),slots:z.array(z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/)).max(12).optional(),
   searchesPerRound:z.number().int().min(1).max(5).optional(),roundsPerDay:z.number().int().min(0).max(12).optional(),
@@ -224,7 +224,8 @@ const event=z.object({
 const job=z.object({
   id,keys:z.array(z.string().max(4500)).max(100),urls:z.array(publicLink).max(100),url:publicLink,
   company:z.string().max(240),title:z.string().min(1).max(300),sourceIds:z.array(z.string().max(4500)).max(100),
-  ...textual(['provider','externalId','requisition','location','workMode','employmentType','seniority','attribution','roleCategory','postingLabel','evidence','jdHash','matchKey'],500),
+  countries:listSetting.optional(),
+  ...textual(['provider','externalId','requisition','location','locationDetails','workMode','employmentType','seniority','attribution','roleCategory','postingLabel','evidence','jdHash','matchKey'],500),
   ...dates(['postedAt','updatedAt','lastAbsentAt','closedAt','reopenedAt','notifiedAt','jdAt','jdUpdatedAt']),firstSeenAt:date,
   active:z.boolean(),official:z.boolean(),manual:z.boolean().optional(),lead:z.boolean().optional(),hidden:z.boolean().optional(),identityReview:z.boolean().optional(),
   jd:z.string().max(48_000).nullish(),members:z.record(z.string(),z.object({active:z.boolean(),key:z.string(),official:z.boolean().optional(),firstSeenAt:date.optional(),lastSeenAt:date.optional()})),

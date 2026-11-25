@@ -1,4 +1,4 @@
-import { normalized } from './domain.js';
+import { distinctValues, normalized, structuredValue } from './domain.js';
 
 export const PROFILE_KEYS = {
   givenName:'First name',familyName:'Last name',fullName:'Full name',preferredName:'Preferred name',email:'Email',
@@ -8,13 +8,37 @@ export const PROFILE_KEYS = {
 };
 
 export function criticalField(value) {
-  return /\b(?:authori[sz](?:ation|ed)|right to work|work eligibility|permission to work|work legally|legally permitted|petition on your behalf|visa|sponsor(?:ship)?|citizen(?:ship)?|permanent resident|h1b|h 1b|stem opt|opt|immigration|work permit|legal(?:ly)? eligible|eligible to work|employment eligibility|security clearance|criminal|convict|felony|drug test|background check|gender|sex(?:ual orientation)?|race|ethnic(?:ity)?|veteran|disabilit(?:y|ies)|eeo|diversity|demographic|age|birth|native american|indigenous|hispanic|latino|pronoun|government id|social security|ssn)\b/.test(normalized(value));
+  return /\b(?:authori[sz](?:ation|ed)|right to work|work eligibility|permission to work|work legally|legally permitted|petition on your behalf|visa|sponsor(?:ship)?|citizen(?:ship)?|permanent resident|h1b|h 1b|stem opt|opt|immigration|work permit|legal(?:ly)? eligible|eligible to work|employment eligibility|security clearance|criminal|convict|felony|drug test|background check|gender|sex(?:ual orientation)?|lgbtq(?:ia)?|race|ethnic(?:ity)?|veteran|disabilit(?:y|ies)|eeo|diversity|demographic|age|birth|native american|indigenous|hispanic|latino|pronouns?|government id|social security|ssn)\b/.test(normalized(value));
 }
 export function consentField(value) {
   return /\b(?:i agree|i accept|agree to|accept the|consent|certif(?:y|ication)|affirm|acknowledge|privacy policy|privacy notice|terms and conditions|signature|sign your|electronic sign|legally binding|accuracy of (?:the )?information)\b/.test(normalized(value));
 }
 
-export const fieldQuestion = value => normalized(value).replace(/\b(?:required|optional)$/, '').trim();
+const yesNo=['Yes','No'];
+const optionalDisclosure=['Yes','No','Prefer not to answer'];
+export const ANSWER_PRESETS=[
+  {question:'Countries where you want to work',countries:true,aliases:['In which countries would you like to work?','Which countries do you want to work in?']},
+  {question:'Are you a citizen of the United States?',choices:yesNo,aliases:['Are you a U.S. citizen?','Are you a US citizen?']},
+  {question:'Are you legally authorized to work in the United States?',choices:yesNo,aliases:['Are you legally authorized to work in the US?','Are you legally authorized to work in the U.S.?','Are you authorized to work in the United States?']},
+  {question:'Will you now or in the future require employer sponsorship in the United States?',choices:yesNo,
+    aliases:['Will you now or in the future require sponsorship to work in the US?','Will you now or in the future require sponsorship to work in the United States?']},
+  {question:'United States: Authorization basis',aliases:['Authorization basis (United States)']},
+  {question:'United States: Work permit or visa type',aliases:['Work permit or visa type (United States)']},
+  {question:'Do you have a disability?',choices:optionalDisclosure},
+  {question:'Do you identify as LGBTQ+?',choices:optionalDisclosure},
+  {question:'What is your gender?',choices:['Male','Female','Non-binary','Prefer not to answer']},
+  {question:'Are you a veteran?',choices:optionalDisclosure},
+  {question:'How would you identify your race?'},
+  {question:'Are you Hispanic or Latino?',choices:optionalDisclosure},
+  {question:'How would you describe your sexual orientation? (Mark all that apply)',aliases:['How would you describe your sexual orientation?']},
+  {question:'What are your pronouns?'}
+];
+const questionText=value=>normalized(value).replace(/\b(?:required|optional)$/, '').trim();
+const aliases=new Map(ANSWER_PRESETS.flatMap(preset=>(preset.aliases??[]).map(alias=>[questionText(alias),questionText(preset.question)])));
+export const fieldQuestion = value => {
+  const text=questionText(value);
+  return aliases.get(text)??text;
+};
 const transforms = {
   'given-name':'givenName','family-name':'familyName',name:'fullName',nickname:'preferredName',email:'email',tel:'phone',
   'tel-country-code':'phoneCountry','address-line1':'address1','street-address':'address1','address-line2':'address2',
@@ -22,7 +46,7 @@ const transforms = {
   organization:'currentEmployer','organization-title':'currentTitle'
 };
 const rules = [
-  ['givenName',/^(?:legal )?(?:first|given|forename) name$|^first$|^firstname$/],
+  ['givenName',/^(?:legal )?(?:first|given|forename) name$|^(?:first|firstname|forename)$/],
   ['familyName',/^(?:legal )?(?:last|family|sur) name$|^surname$|^last$|^lastname$/],
   ['preferredName',/^(?:preferred|chosen|display) (?:first )?name$/],
   ['fullName',/^(?:(?:legal )?full |applicant |your )?name$|^fullname$/],
@@ -52,10 +76,16 @@ export function fieldKey(field) {
   }
   if (field.type==='textarea' && /^cover letter(?: text)?$/.test(name)) return 'coverText';
   if (field.group) return null;
-  if (field.autocomplete && transforms[field.autocomplete]) return transforms[field.autocomplete];
-  if (field.type === 'email') return 'email';
-  if (field.type === 'tel') return 'phone';
-  return rules.find(([,r]) => r.test(name) || r.test(identifiers))?.[0] ?? null;
+  if (['text','textarea','select','skill-picker'].includes(field.type) && /^(?:add |search for )?skills$/.test(name)) return 'skills';
+  const exact=rules.find(([,r])=>r.test(name))?.[0];
+  if (exact) return exact;
+  const hasLabel=name && name!==identifiers && field.labelSource!=='identifier';
+  const inferred=field.autocomplete && transforms[field.autocomplete];
+  if (inferred && (!hasLabel || /^(?:your identity|your information|email|phone)$/.test(name))) return inferred;
+  if (hasLabel) return null;
+  if (field.type==='email') return 'email';
+  if (field.type==='tel') return 'phone';
+  return rules.find(([,r])=>r.test(identifiers))?.[0] ?? null;
 }
 
 function rowValue(field, profile) {
@@ -74,7 +104,12 @@ function rowValue(field, profile) {
     if (/^(?:end date|end month|end year|to)$/.test(value)) return 'end';
     return null;
   };
+  if (field.group.kind==='experience' && field.type==='checkbox' &&
+      /^(?:i )?currently work (?:here|in this role|at this company)$|^current (?:job|role|position)$/.test(label)) {
+    return row.current===true?'true':null;
+  }
   const time = date(label) ?? date(raw);
+  if(time==='end' && row.current===true) return null;
   if (time && row[time]) {
     if (label.includes('month')) return row[time].slice(5,7);
     if (label.includes('year')) return row[time].slice(0,4);
@@ -84,7 +119,7 @@ function rowValue(field, profile) {
   return key ? row[key] : null;
 }
 export function reusableAnswer(field,answers,job) {
-  const matches = answers.filter(answer=>answer.verified && answer.questionKey===fieldQuestion(field.label) &&
+  const matches = answers.filter(answer=>answer.verified && fieldQuestion(answer.questionKey)===fieldQuestion(field.label) &&
     (answer.type==='any'||answer.type===field.type) &&
     (answer.scope==='global' || answer.scope==='company'&&normalized(answer.context)===normalized(job.company) ||
      answer.scope==='role'&&normalized(answer.context)===normalized(job.title)));
@@ -95,19 +130,27 @@ export function reusableAnswer(field,answers,job) {
 }
 export function createFillPlan(fields,{profile={},answers=[],job={},materials={},maps=[],drafts=[]}) {
   return fields.flatMap(field=>{
-    if (field.filled || field.disabled || field.consent || consentField(field.label) || field.type==='password') return [];
+    if (field.filled && field.type!=='skill-picker' || field.disabled || field.consent || consentField(field.label) || field.type==='password') return [];
     const critical = field.critical || criticalField(field.label);
     const verified = reusableAnswer(field,answers,job);
-    if (verified && field.type !== 'file') return [{id:field.id,value:verified.value,authority:'verified'}];
-    if (critical || field.type==='checkbox' || field.type==='radio') return [];
+    if (verified && field.type !== 'file' && !structuredValue(verified.value)) return [{id:field.id,value:verified.value,authority:'verified'}];
+    if (critical) return [];
+    const workValue=rowValue(field,profile);
+    if (field.type==='checkbox' || field.type==='radio') return workValue==='true' && field.type==='checkbox' && field.group?.kind==='experience'
+      ? [{id:field.id,value:workValue,authority:'profile'}]:[];
     const key = fieldKey(field);
+    if(key==='skills') {
+      const skills=distinctValues(profile.skills);
+      if(!skills.length||field.partial) return [];
+      return [{id:field.id,value:skills.join(', '),...(field.type==='skill-picker'||field.multiple?{skills}:{}),authority:'profile'}];
+    }
     if (field.type === 'file') return materials[key] ? [{id:field.id,file:materials[key],authority:'selected'}] : [];
     if (key==='coverText') return materials.coverText ? [{id:field.id,value:materials.coverText,authority:'reviewed'}] : [];
     const mapKey = maps.find(map=>map.id===field.id)?.key;
     const draft = drafts.find(item=>item.id===field.id)?.answer;
     const ordinary = Object.hasOwn(PROFILE_KEYS,mapKey) ? profile[mapKey] : undefined;
-    const value = rowValue(field,profile) ?? (key && profile[key]) ?? ordinary ?? draft;
-    return value !== undefined && value !== null && value !== '' ? [{id:field.id,value:String(value),authority:'profile'}] : [];
+    const value = field.group ? workValue : (key && profile[key]) ?? ordinary ?? draft;
+    return value !== undefined && value !== null && value !== '' && typeof value==='string' && !structuredValue(value) ? [{id:field.id,value:String(value),authority:'profile'}] : [];
   });
 }
 

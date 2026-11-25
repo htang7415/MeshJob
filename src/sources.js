@@ -168,7 +168,8 @@ export function jsonPostings(html, base) {
     const url = absolute(item.url ?? item.mainEntityOfPage?.['@id'] ?? (found.length === 1 ? base : ''),base);
     return {
       externalId:trim(item.identifier?.value ?? item.identifier), url, title:trim(item.title),
-      company:trim(item.hiringOrganization?.name), location:locationOf(item),locationCertain:!!item.jobLocation && item.jobLocationType!=='TELECOMMUTE',
+      company:trim(item.hiringOrganization?.name), location:locationOf(item),countries:[item.jobLocation].flat().map(place=>place?.address?.addressCountry)
+        .map(country=>country?.name??country).filter(country=>typeof country==='string'&&country).map(country=>countriesName(country)),locationCertain:!!item.jobLocation && item.jobLocationType!=='TELECOMMUTE',
       workMode:item.jobLocationType === 'TELECOMMUTE' ? 'Remote' : '',
       employmentType:employment[item.employmentType] ?? trim(item.employmentType), salary:payOf(item.baseSalary),
       postedAt:item.datePosted, dateKind:'JobPosting.datePosted', validThrough:item.validThrough,
@@ -177,6 +178,9 @@ export function jsonPostings(html, base) {
     };
   }).filter(item => item.title && item.url && !(item.validThrough && Date.parse(item.validThrough) < Date.now()));
 }
+const countryNames=new Intl.DisplayNames(['en'],{type:'region'});
+const countriesName=value=>typeof value!=='string'?'':/^[A-Z]{2}$/.test(value)?countryNames.of(value):
+  ({USA:'United States',UK:'United Kingdom'})[value]??value;
 function declaredSeniority(title) {
   const role=String(title??'');
   if (/\b(?:intern(?:ship)?|apprentice)\b/i.test(role)) return 'Internship';
@@ -320,7 +324,16 @@ export async function collect(source, { fetcher = fetchPublic, signal, full = fa
     if (!Array.isArray(data.jobs)) throw new SourceError('Invalid Ashby listing.');
     items = data.jobs.filter(job => job.isListed !== false).map(job => {
       const comp = job.compensation?.summaryComponents?.find(item => item.compensationType === 'Salary');
-      return { externalId:postingIdentity(job.jobUrl)?.externalId, title:job.title, location:job.location,locationCertain:!!job.address?.postalAddress?.addressLocality&&!job.isRemote,
+      const addresses=[job.address,...(job.secondaryLocations??[]).map(location=>location.address)]
+        .map(address=>address?.postalAddress).filter(Boolean);
+      const locations=addresses.map(address=>[
+        address.addressLocality,address.addressRegion,countriesName(address.addressCountry)
+      ].filter(Boolean).join(', '));
+      return {
+        externalId:postingIdentity(job.jobUrl)?.externalId, title:job.title, location:job.location,
+        locationDetails:[job.location,...locations].filter(Boolean).join(' · '),
+        countries:addresses.map(address=>countriesName(address.addressCountry)).filter(Boolean),
+        locationCertain:!!addresses[0]?.addressLocality&&!job.isRemote,
         workMode:titleCase(job.workplaceType ?? (job.isRemote ? 'Remote' : '')), employmentType:employment[job.employmentType] ?? job.employmentType,
         url:job.applyUrl || job.jobUrl, updatedAt:job.publishedAt, jd:job.descriptionPlain?.slice(0,48_000) ?? plain(job.descriptionHtml),
         salary:comp ? {min:comp.minValue,max:comp.maxValue,currency:comp.currency,period:period(comp.interval)} : undefined };

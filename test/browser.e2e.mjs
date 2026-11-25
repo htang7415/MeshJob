@@ -29,7 +29,7 @@ const urls={
 };
 const defaultConfig={
   profile:{givenName:'Taylor',familyName:'Example',fullName:'Taylor Example',email:'taylor@example.invalid',city:'Montréal',
-    country:'Canada',phone:'555-0191',website:'https://example.invalid/sample',experience:[{employer:'Example Company',title:'Coordinator'}],
+    country:'Canada',phone:'555-0191',website:'https://example.invalid/sample',skills:['Python','PyTorch','C++'],experience:[{employer:'Example Company',title:'Coordinator',current:true}],
     education:[{school:'Example College',degree:'Bachelors'}]},preferences:{titles:[]},onboarded:true,advance:true
 };
 const testToken='sk-ant-meshjob-fixture-value';
@@ -131,7 +131,9 @@ function workdayFixture() {
     'const input=(id,label,extra)=>"<label for="+id+">"+label+"</label><input id="+id+" "+(extra||"")+" >";function render(){document.querySelector("h2").textContent=steps[step];const next=document.querySelector("[data-automation-id=bottom-navigation-next-button]");next.hidden=step===3;'+
     'if(step===0)root.innerHTML=input("email","Email","type=email required")+input("first","First name","required");'+
     'if(step===1){root.innerHTML="<div data-automation-id=workExperienceSection><button type=button data-automation-id=add-button>Add</button></div><div data-automation-id=educationSection><button type=button data-automation-id=add-button>Add</button></div>";'+
-    'for(const kind of ["workExperience","education"]){let n=0;const area=root.querySelector("[data-automation-id="+kind+"Section]");area.querySelector("button").onclick=()=>{n++;const html=kind==="workExperience"?input("employer"+n,"Employer","required")+input("title"+n,"Job Title","required"):input("school"+n,"School","required");area.insertAdjacentHTML("beforeend","<section data-automation-id="+kind+"-"+n+">"+html+"</section>");};}}'+
+    'for(const kind of ["workExperience","education"]){let n=0;const area=root.querySelector("[data-automation-id="+kind+"Section]");area.querySelector("button").onclick=()=>{n++;const html=kind==="workExperience"?input("employer"+n,"Employer","required")+input("title"+n,"Job Title","required")+input("current"+n,"I currently work here","type=checkbox")+input("end"+n,"End date","type=date required"):input("school"+n,"School","required");area.insertAdjacentHTML("beforeend","<section data-automation-id="+kind+"-"+n+">"+html+"</section>");if(kind==="workExperience"){const current=document.getElementById("current"+n),end=document.getElementById("end"+n);current.onchange=()=>{end.required=!current.checked;end.hidden=current.checked;};}};}'+
+    `root.insertAdjacentHTML("beforeend",'<div data-automation-id="skillsSection"><div id="tokens"><span data-selected-skill="Python">Python</span></div><label for="skill-query">Skills</label><input id="skill-query" aria-controls="skill-options" role="combobox"><div id="skill-options" role="listbox"></div></div>');`+
+    'const search=document.getElementById("skill-query"),options=document.getElementById("skill-options");search.oninput=()=>{options.replaceChildren();for(const name of ["Python","PyTorch","C","C++"]){if(!search.value||!name.toLowerCase().startsWith(search.value.toLowerCase()))continue;const option=document.createElement("button");option.type="button";option.setAttribute("role","option");option.textContent=name;option.onclick=()=>{const tag=document.createElement("span");tag.dataset.selectedSkill=name;tag.textContent=name;document.getElementById("tokens").append(tag);search.value="";options.replaceChildren();};options.append(option);}};}'+
     'if(step===2)root.innerHTML=input("phone","Phone Number","type=tel required");'+
     'if(step===3)root.innerHTML="<button type=submit id=final>Submit application</button>";}'+
     'document.querySelector("[data-automation-id=bottom-navigation-next-button]").addEventListener("click",()=>{step++;render();});render();</script></html>';
@@ -208,18 +210,67 @@ test('fresh production build runs without host grants, credentials or external a
     await dashboard.getByRole('button',{name:'Add application'}).first().click();
     await dashboard.getByLabel('Company',{exact:true}).fill('Fixture Health');
     await dashboard.getByLabel('Job title',{exact:true}).fill('Clinical Coordinator');
-    await dashboard.getByLabel('Notes',{exact:true}).fill('An offline draft.');
+    await dashboard.getByLabel('Notes',{exact:true}).fill('A sandbox application.');
+    await dashboard.getByLabel('Experience level',{exact:true}).selectOption('Entry level');
+    await dashboard.getByLabel('Priority',{exact:true}).selectOption('High');
+    await dashboard.getByLabel('Workplace type',{exact:true}).selectOption('Hybrid');
+    const date=new Date();
+    const localTime=new Date(date.getTime()-date.getTimezoneOffset()*60_000).toISOString().slice(0,16);
+    await dashboard.getByLabel('Actual submission date · optional').fill(localTime);
     await dashboard.getByRole('button',{name:'Save',exact:true}).click();
     await dashboard.getByRole('button',{name:'Clinical Coordinator'}).waitFor();
+    await dashboard.getByRole('columnheader',{name:'Experience level'}).waitFor();
+    await dashboard.screenshot({path:join(run,'tracker-table.png')});
+    await dashboard.getByRole('button',{name:'Status',exact:true}).click();
+    await dashboard.locator('.status-group').getByRole('heading',{name:/Applied/}).waitFor();
+    await dashboard.getByRole('button',{name:'Calendar',exact:true}).click();
+    await dashboard.locator('.calendar-grid').getByRole('button',{name:'Open Fixture Health'}).waitFor();
+    await dashboard.getByRole('button',{name:'Table',exact:true}).click();
     await dashboard.getByRole('link',{name:'Stats',exact:true}).click();
     await dashboard.getByRole('heading',{name:'Stats',exact:true}).waitFor();
+    await dashboard.getByRole('button',{name:'Month',exact:true}).click();
+    assert.equal(await dashboard.getByRole('button',{name:'Month',exact:true}).getAttribute('aria-pressed'),'true');
+    assert.equal(await dashboard.locator('.metric strong').first().innerText(),'1');
+    await dashboard.screenshot({path:join(run,'stats-month.png')});
     await dashboard.getByRole('button',{name:'Search active',exact:false}).click();
     await dashboard.getByLabel('Mode',{exact:true}).selectOption('Paused');
     await dashboard.getByRole('button',{name:'Update',exact:true}).click();
     await dashboard.getByRole('button',{name:'Search paused',exact:false}).waitFor();
     assert.deepEqual(await dashboard.evaluate(()=>chrome.alarms.getAll()),[]);
     await dashboard.getByRole('link',{name:'Profile',exact:true}).click();
-    await dashboard.getByRole('button',{name:'Add PDF',exact:true}).click();
+    const titles=dashboard.getByRole('textbox',{name:'Target job titles'});
+    await titles.fill('Software Engineer');await titles.press('Enter');
+    await titles.fill('Data Analyst');await titles.press('Enter');
+    await titles.fill('[{"interestingType":"INDUSTRY"}]');
+    assert.equal(await titles.inputValue(),'');
+    await dashboard.getByRole('combobox',{name:'Choose countries',exact:true}).selectOption('Canada');
+    await dashboard.getByRole('combobox',{name:'Choose regions or cities',exact:true}).selectOption('Ontario');
+    await dashboard.getByRole('combobox',{name:'Choose experience level'}).selectOption('Entry level');
+    await dashboard.getByRole('button',{name:'Save preferences'}).click();
+    await dashboard.getByRole('button',{name:'Remove Software Engineer'}).waitFor();
+    await dashboard.getByRole('button',{name:'Remove Data Analyst'}).waitFor();
+    await dashboard.getByRole('button',{name:'Remove Ontario'}).waitFor();
+    assert.equal(await dashboard.getByText('Advanced preferences',{exact:true}).count(),0);
+    await dashboard.screenshot({path:join(run,'profile-preferences.png')});
+    await dashboard.getByRole('button',{name:'Add experience',exact:true}).click();
+    await dashboard.getByLabel('Employer',{exact:true}).fill('Sandbox Employer');
+    await dashboard.getByRole('checkbox',{name:'I currently work in this role'}).check();
+    assert.equal(await dashboard.getByLabel('End date',{exact:true}).isVisible(),false);
+    await dashboard.getByRole('button',{name:'Save',exact:true}).click();
+    await dashboard.getByText(/Sandbox Employer/).waitFor();
+    const skills=dashboard.getByRole('textbox',{name:'Add skills',exact:true});
+    await skills.fill('Python, PyTorch, C++');await skills.press('Enter');
+    await dashboard.getByRole('button',{name:'Save skills'}).click();
+    await dashboard.getByRole('button',{name:'Remove C++'}).waitFor();
+    assert.equal(await dashboard.getByRole('button',{name:/^Set answer: /}).count(),14);
+    await dashboard.getByRole('button',{name:'Set answer: Are you a citizen of the United States?'}).click();
+    assert.equal(await dashboard.getByLabel('Answer',{exact:true}).inputValue(),'');
+    await dashboard.getByLabel('Answer',{exact:true}).fill('Prefer not to answer');
+    await dashboard.getByRole('checkbox',{name:'I verified this answer for the question shown.'}).check();
+    await dashboard.getByRole('button',{name:'Save',exact:true}).click();
+    await dashboard.getByRole('button',{name:'Edit answer: Are you a citizen of the United States?'}).waitFor();
+    await dashboard.getByRole('heading',{name:'Cover letters',exact:true}).waitFor();
+    await dashboard.getByRole('button',{name:'Add resume',exact:true}).click();
     await dashboard.getByLabel('PDF file',{exact:true}).setInputFiles({name:'fixture-material.pdf',mimeType:'application/pdf',buffer:pdfFixture()});
     await dashboard.getByRole('button',{name:'Save',exact:true}).click();
     await dashboard.getByText(/fixture-material.pdf · revision 1/).waitFor({timeout:25000});
@@ -247,6 +298,11 @@ test('fresh production build runs without host grants, credentials or external a
     const files=unzipSync(new Uint8Array(await readFile(path)));
     const data=JSON.parse(Buffer.from(files['records.json']).toString());
     assert.equal(data.materials.length,1);assert.match(data.materials[0].text,/MeshJob local fixture text/);
+    assert.deepEqual(data.settings.preferences.titles,['Software Engineer','Data Analyst']);
+    assert.deepEqual(data.settings.preferences.countries,['Canada']);
+    assert.deepEqual(data.settings.profile.skills,['Python','PyTorch','C++']);
+    assert.equal(data.settings.profile.experience[0].current,true);
+    assert.equal(data.settings.profile.experience[0].end,undefined);
     assert.deepEqual(Buffer.from(files['pdf/'+data.materials[0].hash+'.pdf']),pdfFixture());
     const session=await context.newCDPSession(dashboard);
     await session.send('ServiceWorker.enable');
@@ -281,6 +337,17 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
       await route.fulfill({status:200,contentType:'text/html',body:value.searchParams.has('multi')?workdayFixture():fixture(provider,variant)});
     });
     await rpc(dashboard,'settings:update',{config:defaultConfig});
+    const discovered={keys:[],urls:[],sourceIds:[],members:{},active:true,official:false,company:'Media Inc',location:'Remote'};
+    await putInStore(dashboard,'jobs',{...discovered,id:'sort-high',title:'High match role',match:{score:95},firstSeenAt:new Date(Date.now()-60_000).toISOString()});
+    await putInStore(dashboard,'jobs',{...discovered,id:'sort-new',title:'New role',firstSeenAt:new Date().toISOString()});
+    await dashboard.reload();
+    await dashboard.getByRole('button',{name:'New role',exact:true}).waitFor();
+    assert.equal(await dashboard.locator('.job-row h2').first().innerText(),'New role');
+    await dashboard.getByRole('combobox',{name:'Sort by',exact:true}).selectOption('match');
+    assert.equal(await dashboard.locator('.job-row h2').first().innerText(),'High match role');
+    assert.equal(await dashboard.getByLabel('Employment type',{exact:true}).count(),0);
+    await dashboard.getByRole('combobox',{name:'Sort by',exact:true}).selectOption('recent');
+
     for(const provider of Object.keys(urls)) {
       for(let variant=0;variant<20;variant++) {
         const tab=await context.newPage();
@@ -334,6 +401,13 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
       const plan=await planFor(ref.inspection,{workday:true});
       const fill=await rpc(dashboard,'form:fill',{...ref,plan});
       assert.equal(fill.unresolved.length,0);
+      if(ref.inspection.step==='My Experience') {
+        assert.equal(await tab.locator('#current1').isChecked(),true);
+        assert.equal(await tab.locator('#end1').isVisible(),false);
+        assert.deepEqual(await tab.locator('[data-selected-skill]').allTextContents(),['Python','PyTorch','C++']);
+        await rpc(dashboard,'form:fill',{...ref,plan});
+        assert.deepEqual(await tab.locator('[data-selected-skill]').allTextContents(),['Python','PyTorch','C++']);
+      }
       step=await rpc(dashboard,'form:advance',ref);
       assert.equal(step.step,expect);metrics.workday.push(expect);
       ref.inspection=await rpc(dashboard,'form:inspect',{tabId:ref.tabId});

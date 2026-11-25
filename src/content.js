@@ -1,4 +1,4 @@
-import { canonicalUrl, normalized, trim } from './domain.js';
+import { canonicalUrl, distinctValues, normalized, trim } from './domain.js';
 import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECTORS } from './form-rules.js';
 
 (() => {
@@ -28,7 +28,7 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
     if (/(^|\.)greenhouse\.io$/.test(host)) return 'greenhouse';
     if (/(^|\.)ashbyhq\.com$/.test(host)) return 'ashby';
     if (/(^|\.)lever\.co$/.test(host)) return 'lever';
-    if (/(^|\.)myworkdayjobs\.com$/.test(host)) return 'workday';
+    if (/(^|\.)(?:myworkdayjobs|myworkdaysite)\.com$/.test(host)) return 'workday';
     return 'generic';
   };
   function readJob() {
@@ -82,7 +82,18 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
     if (!name) return [node];
     return [...(node.form??doc).querySelectorAll('input[type=radio][name="'+CSS.escape(name)+'"]')].filter(visible);
   }
+  function skillPicker(node) {
+    if(providerOf()!=='workday'||!(node instanceof HTMLInputElement)||!['text','search'].includes(node.type)) return null;
+    const section=node.closest('[data-automation-id="skillsSection"],[data-automation-id="formField-skills"],[data-automation-id="skills"]');
+    if(!section) return null;
+    return node.closest('[data-automation-id="multiSelectContainer"]')??section;
+  }
+  function selectedSkills(widget) {
+    const tokens=widget?.querySelectorAll('[data-selected-skill],[data-automation-id="selectedItem"],[data-automation-id="selectedItemLabel"],[data-automation-id="selectedItemText"],[data-automation-id="multiSelectValue"]')??[];
+    return [...tokens].map(item=>trim(item.getAttribute('data-selected-skill')||item.querySelector('[data-automation-id="selectedItemLabel"]')?.textContent||item.textContent));
+  }
   function valueExists(node,type) {
+    if (type==='skill-picker') return selectedSkills(skillPicker(node)).length>0;
     if (type==='radio') return radioNodes(node).some(input=>input.checked || input.getAttribute('aria-checked')==='true');
     if (type==='checkbox') return node.checked || node.getAttribute('aria-checked')==='true';
     if (type==='file') return !!node.files?.length;
@@ -99,9 +110,9 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
     for (const node of doc.querySelectorAll(selector)) {
       if (!visible(node) && !(node.type==='file' && [...(node.labels ?? [])].some(visible))) continue;
       const role = node.getAttribute('role');
-      const type = ['radio','checkbox','combobox'].includes(role)?role:
+      const type = skillPicker(node)?'skill-picker':['radio','checkbox','combobox'].includes(role)?role:
         node.tagName==='SELECT'?'select':node.tagName==='TEXTAREA'||node.isContentEditable?'textarea':node.type || 'text';
-      let label = nativeLabel(node);
+      let label = type==='skill-picker'?'Skills':nativeLabel(node);
       let radioOptions = [];
       if (type==='radio') {
         radioOptions = radioNodes(node);
@@ -117,7 +128,7 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
       const name = node.name || node.getAttribute('data-automation-id') || node.id;
       const phrase = label+' '+name+' '+(type==='checkbox' ? trim(node.parentElement?.textContent).slice(0,250) : '');
       const row = {
-        id,label,name,type,group:groupOf(node),autocomplete:node.getAttribute('autocomplete')?.split(/\s+/).at(-1),
+        id,label,name,type,multiple:node.multiple===true,partial:type==='skill-picker'&&!!trim(node.value),group:groupOf(node),autocomplete:node.getAttribute('autocomplete')?.split(/\s+/).at(-1),
         required:node.required || node.getAttribute('aria-required')==='true' || node.closest('[data-required="true"]')!==null ||
           radioOptions.some(current=>current.required) || /\*$/.test(label),
         critical:criticalField(phrase),consent:consentField(phrase),
@@ -148,11 +159,15 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
     node.dispatchEvent(new Event('change',{bubbles:true}));
     node.dispatchEvent(new FocusEvent('focusout',{bubbles:true,composed:true}));
   }
-  function setNative(node,value,property='value') {
+  function setNative(node,value,property='value',complete=true) {
     let parent = Object.getPrototypeOf(node);
     while (parent) {
       const propertySet = Object.getOwnPropertyDescriptor(parent,property)?.set;
-      if (propertySet) {propertySet.call(node,value);dispatch(node);return;}
+      if (propertySet) {
+        propertySet.call(node,value);
+        if(complete)dispatch(node);else node.dispatchEvent(new Event('input',{bubbles:true,composed:true}));
+        return;
+      }
       parent = Object.getPrototypeOf(parent);
     }
     throw new Error('Unsupported form control.');
@@ -169,8 +184,35 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
   function decode(encoded) {
     return Uint8Array.from(atob(encoded),part=>part.charCodeAt(0));
   }
+  async function fillSkills(node,skills) {
+    const widget=skillPicker(node);
+    if(!widget||node.value||!skills?.length) throw new Error('Finish editing this skills field manually.');
+    const isSelected=skill=>selectedSkills(widget).some(value=>value.toLowerCase()===skill.toLowerCase());
+    const popup=()=>{
+      const id=node.getAttribute('aria-controls')||node.getAttribute('aria-owns');
+      return id?doc.getElementById(id):widget.querySelector('[role=listbox],[data-automation-id="promptOptions"]');
+    };
+    const deadline=performance.now()+8000;
+    for(const skill of skills) {
+      if(cancelled||performance.now()>deadline||!node.isConnected||node.value) break;
+      if(isSelected(skill)) continue;
+      node.focus();
+      setNative(node,skill,'value',false);
+      const choice=await waitingFor(()=>{
+        const exact=[...popup()?.querySelectorAll('[role=option],[data-automation-id="promptOption"]')??[]]
+          .filter(item=>visible(item)&&trim(item.textContent).toLowerCase()===skill.toLowerCase());
+        return exact.length===1?exact[0]:null;
+      },500);
+      if(cancelled||!node.isConnected) break;
+      if(choice&&safeClick(choice)) await waitingFor(()=>isSelected(skill),300);
+      if(node.value===skill) setNative(node,'','value',false);
+    }
+    if(skills.some(skill=>!isSelected(skill))) throw new Error('Review remaining skills. MeshJob selected exact options it could verify.');
+    return ()=>skills.every(isSelected);
+  }
   async function setField(node,row,entry) {
     const value = entry.value;
+    if (row.type==='skill-picker') return fillSkills(node,entry.skills);
     if (row.type==='file') {
       const {name,data} = entry.file ?? {};
       if (!name || !data || !/\.pdf$/i.test(name)) throw new Error('Choose a PDF in the side panel.');
@@ -193,6 +235,15 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
       if (arm.matches('input[type=radio]')) setNative(arm,true,'checked');
       else if (!safeClick(arm)) throw new Error('Select this option manually.');
       return () => !!arm.checked || arm.getAttribute('aria-checked')==='true';
+    }
+    if (row.type==='select' && row.multiple) {
+      const options=[...node.options].filter(item=>!item.disabled&&item.value);
+      const matches=choose(options,value,item=>item.textContent);
+      const requested=matches?[matches]:(entry.skills??distinctValues(value)).map(word=>choose(options,word,item=>item.textContent));
+      if(!requested.length||requested.some(option=>!option)) throw new Error('One or more saved choices are unavailable.');
+      for(const option of requested) option.selected=true;
+      dispatch(node);
+      return ()=>requested.every(option=>option.selected);
     }
     if (row.type==='select') {
       const read = () => choose([...node.options].filter(item=>!item.disabled&&item.value),value,item=>item.textContent);
@@ -266,7 +317,7 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
         if (!handle || !handle.node.isConnected) continue;
         const {node,row} = handle;
         if (row.disabled || row.consent || row.type==='password'||(row.critical&&entry.authority!=='verified')) continue;
-        if (valueExists(node,row.type)) {results.push({id:row.id,label:row.label,state:'preserved'});continue;}
+        if (row.type!=='skill-picker' && valueExists(node,row.type)) {results.push({id:row.id,label:row.label,state:'preserved'});continue;}
         try {
           const verify = await setField(node,row,entry);
           await Promise.resolve();

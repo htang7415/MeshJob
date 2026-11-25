@@ -248,3 +248,14 @@ test('Gmail cursor recovers from expired history and leaves mailbox unchanged in
   assert.equal((await db.runtime.get('gmail-cursor')).base,'recent');
   assert.equal((await db.runtime.get('gmail-cursor')).recover,false);
 });
+
+test('older saved browser autofill payloads cannot pollute profile or preferences',async()=>{
+  await db.settings.put({id:'settings',preferences:{titles:['Software Engineer','[{"id":"bad"}]'],industries:['[{"id":"1056"','"type":"INDUSTRY"']},
+    profile:{givenName:'{"id":"wrong field"}',skills:['PyTorch','pytorch','C++'],summary:'{"example":true}'}});
+  const state=await settings();
+  assert.deepEqual(state.preferences.titles,['Software Engineer']);
+  assert.deepEqual(state.preferences.industries,[]);
+  assert.equal(state.profile.givenName,'');
+  assert.deepEqual(state.profile.skills,['PyTorch','C++']);
+  assert.equal(state.profile.summary,'{"example":true}');
+});

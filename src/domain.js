@@ -1,7 +1,7 @@
 export const STAGES = ['Saved', 'Preparing', 'Applied', 'OA', 'Interview', 'Offer', 'Rejected', 'Withdrawn', 'Accepted'];
 export const SLOTS = ['08:30', '10:30', '12:30', '14:30', '16:30', '18:30'];
 export const PREFERENCES = {
-  titles: [], aliases: [], seniority: [], employmentType: [], locations: [], workMode: [], freshnessHours: 24,
+  titles: [], aliases: [], seniority: [], employmentType: [], locations: [], countries: [], workMode: [], freshnessHours: 24,
   sponsorship: 'Unspecified', minimumPay: null, currency: 'USD', period: 'year', industries: [], companies: [],
   skills: [], excludeCompanies: [], excludeTitles: [], strictUnknown: false
 };
@@ -19,7 +19,24 @@ const DENIED = /(^|\.)(linkedin\.com|jobright\.ai|simplify\.jobs|ycombinator\.co
 export const nowISO = () => new Date().toISOString();
 export const trim = value => String(value ?? '').replace(/\s+/g, ' ').trim();
 export const normalized = value => trim(value).normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}]+/gu, ' ').replace(/\s+/g, ' ').trim();
+export const structuredValue = value => {
+  if (typeof value !== 'string' || !/^\s*[\[{]/.test(value)) return false;
+  try {
+    const parsed=JSON.parse(value);
+    return parsed!==null && typeof parsed==='object';
+  } catch {
+    return /^\s*(?:\[\s*)?\{\s*"[^"]+"\s*:/.test(value);
+  }
+};
 export const list = value => Array.isArray(value) ? value.map(trim).filter(Boolean) : String(value ?? '').split(/[,\n]/).map(trim).filter(Boolean);
+export function distinctValues(value) {
+  if (structuredValue(value)) return [];
+  const unique=new Map();
+  for(const entry of list(value)) {
+    if(!structuredValue(entry)&&!/^"[\w$-]+"\s*:/.test(entry)&&!unique.has(entry.toLowerCase())) unique.set(entry.toLowerCase(),entry);
+  }
+  return [...unique.values()];
+}
 export const validDate = value => !!value && typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value) && Number.isFinite(Date.parse(value));
 export const exactDate = value => validDate(value) && /T\d{2}:\d{2}.*(?:Z|[+-]\d\d:\d\d)$/i.test(value) && Date.parse(value) <= Date.now();
 export const uid = () => crypto.randomUUID();
@@ -119,6 +136,16 @@ export function sponsorshipEvidence(text, url, userEvidence = []) {
   return { status, items:[...evidence,...userEvidence].slice(0, 24) };
 }
 
+function experienceBand(value) {
+  const key=normalized(value);
+  if (/^(?:junior|entry|entry level|new grad|early career)$/.test(key)) return 'Entry level';
+  if (/^(?:mid level|mid senior level|senior|staff|principal|lead)$/.test(key)) return 'Mid-Senior level';
+  return value;
+}
+function workplaceBand(value) {
+  return normalized(value)==='onsite'?'On-site':value;
+}
+
 export function preferenceDecision(job, raw = PREFERENCES) {
   const p = { ...PREFERENCES, ...raw };
   const title = normalized(job.title);
@@ -128,12 +155,18 @@ export function preferenceDecision(job, raw = PREFERENCES) {
   if (p.excludeTitles.some(value => normalized(value) && phrase(title, normalized(value)))) reasons.push('Excluded title');
   if (p.excludeCompanies.some(value => company && normalized(value) === company)) reasons.push('Excluded company');
   if (!titleRelevant(job.title, p)) reasons.push('Title does not match');
-  for (const [field, label] of [['seniority','Seniority'],['employmentType','Employment type'],['workMode','Work arrangement']]) {
-    if (conflicts(p[field], job[field])) reasons.push(label + ' does not match');
+  for (const [field, label] of [['seniority','Experience level'],['employmentType','Employment type'],['workMode','Workplace type']]) {
+    const comparable=field==='seniority'?experienceBand:field==='workMode'?workplaceBand:value=>value;
+    if (conflicts(p[field].map(comparable), comparable(job[field]))) reasons.push(label + ' does not match');
     if (p[field].length && !job[field]) unknown.push(label);
   }
+  if (p.countries.length) {
+    const countries=job.countries??[];
+    if (!countries.length && !(job.location&&p.countries.some(country=>!conflicts([country],job.location)))) unknown.push('Country');
+    if (countries.length && countries.every(country=>conflicts(p.countries,country))) reasons.push('Country does not match');
+  }
   if (p.locations.length && !job.location) unknown.push('Location');
-  if (job.locationCertain && !/remote/i.test(job.workMode ?? '') && conflicts(p.locations, job.location)) reasons.push('Location does not match');
+  if (job.locationCertain && !/remote/i.test(job.workMode ?? '') && conflicts(p.locations, job.locationDetails||job.location)) reasons.push('Location does not match');
   if (p.minimumPay) {
     const comparable = job.salary?.currency === p.currency && job.salary?.period === p.period && job.salary?.max > 0;
     if (comparable && job.salary.max < p.minimumPay) reasons.push('Compensation below minimum');

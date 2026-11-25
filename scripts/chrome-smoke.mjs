@@ -63,7 +63,7 @@ try {
   await until("document.querySelector('tbody')?.innerText.includes('Clinical Coordinator')");
   await expr("location.hash='#profile'");
   await heading('Profile');
-  await click('Add PDF');
+  await click('Add resume');
   await until("document.querySelector('dialog[open] input[type=file]')!==null");
   const pdf=pdfFixture();
   const injectFile=(name,mime,bytes)=>expr(`(() => {

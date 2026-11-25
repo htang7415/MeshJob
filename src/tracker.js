@@ -29,7 +29,7 @@ export function describeImport(raw) {
     company:trim(raw.company).slice(0,180), title:trim(raw.title).slice(0,240),
     requisition:trim(raw.requisition ?? raw.job_id).slice(0,120), location:trim(raw.location).slice(0,240),
     roleCategory:trim(raw.roleCategory), seniority:trim(raw.seniority), workMode:trim(raw.workMode),
-    employmentType:trim(raw.employmentType), attribution:trim(raw.attribution ?? raw.source) || (url ? new URL(url).hostname : 'Manual'),
+    employmentType:trim(raw.employmentType), priority:trim(raw.priority), attribution:trim(raw.attribution ?? raw.source) || (url ? new URL(url).hostname : 'Manual'),
     provider:identity?.source.provider ?? 'manual', externalId:identity?.externalId ?? trim(raw.externalId)
   };
   if (!job.title || !job.company) throw new Error('Company and job title are required.');
@@ -100,7 +100,11 @@ export async function saveApplication(raw, { stage = 'Saved', jobId = '', existi
       if (existing) {
         const edited = {...same,notes:String(raw?.notes ?? same.notes).slice(0,24000),
           company:input?.company ?? same.company,title:input?.title ?? same.title,location:input?.location ?? same.location,
-          url:input?.url ?? same.url,requisition:input?.requisition ?? same.requisition};
+          url:input?.url ?? same.url,requisition:input?.requisition ?? same.requisition,
+          ...(raw?.source!==undefined||raw?.attribution!==undefined?{source:input.attribution}:{}),
+          ...(raw?.seniority!==undefined?{seniority:input.seniority}:{}),
+          ...(raw?.workMode!==undefined?{workMode:input.workMode}:{}),
+          ...(raw?.priority!==undefined?{priority:input.priority}:{})};
         await db.applications.put(edited);
       }
       if (stage === 'Preparing' && same.status === 'Saved') await recordEvent({id:'prepare:'+same.id,applicationId:same.id,kind:'stage',stage});
@@ -113,7 +117,7 @@ export async function saveApplication(raw, { stage = 'Saved', jobId = '', existi
       url:input?.url || job.url,requisition:input?.requisition || job.requisition || job.externalId,
       location:input?.location || job.location,source:input?.attribution || job.attribution || job.provider,
       roleCategory:input?.roleCategory || job.roleCategory,seniority:input?.seniority || job.seniority,
-      workMode:input?.workMode || job.workMode,employmentType:input?.employmentType || job.employmentType,
+      workMode:input?.workMode || job.workMode,priority:input?.priority || job.priority,employmentType:input?.employmentType || job.employmentType,
       sponsorshipStatus:job.sponsorship?.status,postedAt:job.postedAt,firstSeenAt:job.firstSeenAt,
       createdAt:at,updatedAt:at,notes:String(raw?.notes ?? '').slice(0,24000),status:'Saved',submission:'unverified'
     };

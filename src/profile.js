@@ -1,75 +1,67 @@
 import { db, settings } from './db.js';
-import { list, SLOTS } from './domain.js';
-import { PROFILE_KEYS } from './form-rules.js';
+import { distinctValues, list, SLOTS, structuredValue } from './domain.js';
+import { ANSWER_PRESETS, fieldQuestion, PROFILE_KEYS } from './form-rules.js';
 import { PRICES, PRICE_VERSION } from './intelligence.js';
 import { MAIL_ORIGINS } from './mail.js';
+import { COUNTRY_OPTIONS, EMPLOYMENT_TYPES, EXPERIENCE_LEVELS, regionOptions, WORKPLACE_TYPES } from './preferences.js';
 import { removeMaterial, saveAnswer, storeMaterial } from './materials.js';
 import { previewBackup, restoreBackup } from './portability.js';
-import { badge,button,check,dataTable,dateLabel,el,field,formDialog,input,link,money,paragraph,permit,rpc,section,select,task,textarea,toast } from './ui.js';
+import { badge,button,check,dataTable,dateLabel,el,elements,field,formDialog,input,link,money,paragraph,permit,readTokens,rpc,section,select,task,textarea,toast,tokenField } from './ui.js';
 
-const preferences=[
-  ['titles','Target job titles','e.g. Data analyst, primary school teacher'],
-  ['locations','Countries, regions, or cities','e.g. Canada, Berlin'],
-  ['seniority','Seniority','e.g. Entry level, Senior'],
-  ['employmentType','Employment type','e.g. Full-time, Internship'],
-  ['workMode','Work arrangement','e.g. Remote, Hybrid, On-site']
-];
-const advanced=[
-  ['aliases','Additional job title aliases'],['industries','Preferred industries'],['companies','Preferred companies'],['skills','Preferred skills'],
-  ['excludeCompanies','Exclude these companies'],['excludeTitles','Exclude these titles or phrases']
-];
 const stages=['any','text','textarea','select','combobox','radio','checkbox','number','email','url','date'];
 const defaultSelect=(name,material,rows,current)=>field(material,select(name,[['','No default'],...rows.map(row=>[row.id,row.label])],current??''));
-const buildForm=(children,submit,label='Save changes')=>el('form',{class:'stack',onsubmit:task(async event=>{
+const buildForm=(children,submit,label='Save changes')=>el('form',{class:'stack',autocomplete:'off',onsubmit:task(async event=>{
   event.preventDefault();
-  await submit(Object.fromEntries(new FormData(event.currentTarget)));
+  await submit(elements(event.currentTarget));
 })},children,el('div',{class:'actions'},el('button',{class:'button primary',type:'submit'},label)));
-const once=(title,item)=>el('span',{class:'inline-group'},el('span',{class:'meta'},title),item);
-const labels=['Preferences','Personal details','Materials','Verified answers','Integrations','Schedules and budget','Local data'];
+const labels=['Preferences','Personal details','Documents','Verified answers','Integrations','Schedules and budget','Local data'];
+const preferenceLists=['titles','countries','locations','seniority','employmentType','workMode'];
 
 export function readPreferences(values) {
-  const output={};
-  for(const key of [...preferences,...advanced].map(([key])=>key)) if(key in values) output[key]=list(values[key]);
-  for(const key of ['currency','period','sponsorship']) if(key in values) output[key]=values[key];
-  if('freshnessHours' in values) output.freshnessHours=Number(values.freshnessHours);
-  if('minimumPay' in values) output.minimumPay=Number(values.minimumPay)||null;
-  if('strictControl' in values) output.strictUnknown=!!values.strictUnknown;
-  return output;
+  return {
+    ...Object.fromEntries(preferenceLists.map(key=>[key,readTokens(values,key)])),
+    sponsorship:values.sponsorship||'Unspecified',
+    ...(values.freshnessHours ? {freshnessHours:Number(values.freshnessHours)} : {})
+  };
 }
-export function preferencesForm(preferencesData,compact=false) {
-  const row=([key,label,example])=>field(label,input(key,preferencesData[key]?.join(', '),{placeholder:example}),example?'Separate multiple values with commas.':undefined);
-  const titleField=row(preferences[0]);
-  const presets=['Software engineer','Data analyst','Registered nurse','Product designer','Customer support','Teacher'];
-  return el('div',{class:'stack'},
-    titleField,compact&&el('div',{class:'actions','aria-label':'Suggested role titles'},presets.map(text=>button(text,()=>{
-      const control=titleField.querySelector('input');
-      control.value=[...new Set([...list(control.value),text])].join(', ');
-      control.focus();
-    },'quiet'))),
-    el('div',{class:'form-grid'},preferences.slice(1).map(row),
-      field('Sponsorship',select('sponsorship',['Unspecified','Required','Not required'],preferencesData.sponsorship)),
-      !compact&&field('Freshness window in hours',input('freshnessHours',preferencesData.freshnessHours,{type:'number',min:1,max:720,required:true}))),
-    !compact&&el('details',{class:'stack'},el('summary',{},'Advanced preferences'),
-      el('div',{class:'form-grid',style:'margin-top:10px'},advanced.map(row),
-        field('Minimum compensation',input('minimumPay',preferencesData.minimumPay,{type:'number',min:0,step:'any'})),
-        field('Currency',input('currency',preferencesData.currency,{maxlength:3,pattern:'[A-Z]{3}'})),
-        field('Compensation period',select('period',['year','month','week','hour'],preferencesData.period)),
-        input('strictControl','1',{type:'hidden'}),check('strictUnknown','Exclude jobs when required evidence is missing',preferencesData.strictUnknown)))
+export function preferencesForm(p,compact=false) {
+  const countries=distinctValues(p.countries);
+  const regions=tokenField('locations','Regions or cities',p.locations,{
+    choices:regionOptions(countries),placeholder:'Add a region, state, or city'
+  });
+  const country=tokenField('countries','Countries',countries,{
+    choices:COUNTRY_OPTIONS,custom:false,change:values=>regions.setChoices(regionOptions(values))
+  });
+  return el('div',{class:'stack large preference-fields'},
+    tokenField('titles','Target job titles',p.titles,{placeholder:'Software engineer, Data analyst'}).root,
+    el('div',{class:'form-grid'},country.root,regions.root,
+      tokenField('seniority','Experience level',p.seniority,{choices:EXPERIENCE_LEVELS,custom:false}).root,
+      tokenField('employmentType','Employment type',p.employmentType,{choices:EMPLOYMENT_TYPES,custom:false}).root,
+      tokenField('workMode','Workplace type',p.workMode,{choices:WORKPLACE_TYPES,custom:false}).root,
+      field('Visa sponsorship',select('sponsorship',[['Unspecified','No preference'],'Required','Not required'],p.sponsorship)),
+      !compact&&field('Date posted',select('freshnessHours',[
+        ['24','Past 24 hours'],['168','Past week'],['720','Past month'],
+        ...([24,168,720].includes(p.freshnessHours)?[]:[[String(p.freshnessHours),'Past '+p.freshnessHours+' hours']])
+      ],String(p.freshnessHours))))
   );
 }
 function factsForm(config) {
   const fields=Object.entries(PROFILE_KEYS).filter(([key])=>key!=='fullName');
   return buildForm([
     el('div',{class:'form-grid'},fields.map(([key,label])=>field(label,input(key,config.profile[key],{
-      type:key==='email'?'email':key==='phone'?'tel':['linkedin','website','github'].includes(key)?'url':'text',maxlength:240,autocomplete:'off'
+      type:key==='email'?'email':key==='phone'?'tel':['linkedin','website','github'].includes(key)?'url':'text',maxlength:240
     })))),
-    field('Skills',input('skills',config.profile.skills?.join(', '))),
     field('Professional summary',textarea('summary',config.profile.summary??'',{maxlength:12000}))
   ],async values=>{
-    const {skills,...rest}=values;
-    rest.fullName=[rest.givenName,rest.familyName].filter(Boolean).join(' ');
-    await rpc('settings:update',{config:{profile:{...rest,skills:list(skills)}}});toast('Profile saved.');
+    values.fullName=[values.givenName,values.familyName].filter(Boolean).join(' ');
+    await rpc('settings:update',{config:{profile:values}});toast('Profile saved.');
   },'Save profile');
+}
+function skillsForm(profile) {
+  return el('div',{class:'stack'},el('h3',{},'Skills'),
+    buildForm(tokenField('skills','Add skills',profile.skills,{placeholder:'Python, PyTorch'}).root,async values=>{
+      await rpc('settings:update',{config:{profile:{skills:readTokens(values,'skills')}}});toast('Skills saved.');
+    },'Save skills'));
 }
 const workFields={education:[['school','School'],['degree','Degree'],['field','Field of study'],['gpa','GPA'],['start','Start date'],['end','End date']],
   experience:[['employer','Employer'],['title','Job title'],['location','Location'],['start','Start date'],['end','End date'],['description','Description']]};
@@ -78,12 +70,26 @@ function historyDialog(key,index) {
     const profile=(await settings()).profile;
     const rows=profile[key]??[];
     const existing=rows[index]??{};
+    const end=input('end',existing.end??'',{type:'date'});
+    const endField=field('End date',end);
+    const currentRole=key==='experience'&&check('current','I currently work in this role',existing.current===true);
+    if(currentRole) {
+      const current=currentRole.querySelector('input');
+      const sync=()=>{endField.hidden=current.checked;end.disabled=current.checked;};
+      current.addEventListener('change',sync);
+      sync();
+    }
     formDialog(index==null?'Add '+key:'Edit '+key,[el('div',{class:'form-grid'},workFields[key].map(([name,label],i)=>{
+      if(name==='end') return [currentRole,endField];
       const current=existing[name]??'';
       const control=name==='description'?textarea(name,current,{maxlength:12000}):
-        input(name,current,{type:['start','end'].includes(name)?'date':'text',required:i===0});
+        input(name,current,{type:name==='start'?'date':'text',required:i===0});
       return field(label,control);
     }))],async values=>{
+      if(key==='experience') {
+        values.current=values.current==='1';
+        if(values.current) delete values.end;
+      }
       const current=(await settings()).profile[key]??[];
       if(index==null) current.push(values);else current[index]=values;
       await rpc('settings:update',{config:{profile:{[key]:current}}});toast('Profile history saved.');
@@ -101,19 +107,18 @@ function profileHistory(profile,key) {
     el('div',{class:'flex between'},el('h3',{},key==='experience'?'Work experience':'Education'),button('Add '+key,()=>historyDialog(key))),
     records.length?dataTable(['Entry','Dates',''],records.map((row,i)=>[
       [row.employer??row.school,row.title??row.degree].filter(Boolean).join(' · '),
-      [row.start||'Unknown',row.end||'Present or unknown'].join(' — '),
+      [row.start||'Unknown',row.current===true?'Present':row.end||'—'].join(' — '),
       el('div',{class:'actions'},button('Edit',()=>historyDialog(key,i)),button('Remove',()=>drop(i),'danger'))
     ])):paragraph('No '+key+' entries.','meta'));
 }
-function materialDialog(item) {
+function materialDialog(type,item) {
   const file=input('file','',{type:'file',accept:'.pdf,application/pdf',required:!item});
   const state=el('p',{role:'status'});
   const cancel=button('Cancel extraction',()=>operation?.abort(),'quiet',{hidden:true});
   let operation;
-  formDialog(item?'Edit material':'Add PDF material',[
+  formDialog((item?'Edit ':'Add ')+(type==='resume'?'resume':'cover letter'),[
     field(item?'Replacement PDF · optional':'PDF file',file),
-    el('div',{class:'form-grid'},field('Material type',select('type',[['resume','Resume'],['cover','Cover letter']],item?.type??'resume')),
-      field('Label',input('label',item?.label,{maxlength:200}))),
+    field('Label',input('label',item?.label,{maxlength:200})),
     field('Tags',input('tags',item?.tags?.join(', '))),
     el('details',{},el('summary',{},'Review or supply extracted text'),field('Material text',textarea('text',item?.text??'',{maxlength:150000}))),
     state,cancel
@@ -122,7 +127,7 @@ function materialDialog(item) {
     operation=new AbortController();
     try {
       const text=file.files[0]&&item&&values.text===item.text?'':values.text;
-      const result=await storeMaterial({...values,text,file:file.files[0],id:item?.id,signal:operation.signal});
+      const result=await storeMaterial({...values,type,text,file:file.files[0],id:item?.id,signal:operation.signal});
       toast(result.warning||'PDF material saved.');
     } finally {state.textContent='';cancel.hidden=true;}
   });
@@ -132,44 +137,74 @@ function pdfPreview(item) {
   window.open(url,'_blank','noopener,noreferrer');
   setTimeout(()=>URL.revokeObjectURL(url),120_000);
 }
-function materialsView(config,rows) {
-  const remove=item=>formDialog('Delete PDF material',[
-    paragraph('Delete '+item.name+' from local materials. Application history retains the recorded name and revision.')
+function documentsView(config,rows) {
+  const remove=item=>formDialog('Delete document',[
+    paragraph('Delete '+item.name+' from local documents. Application history retains the recorded name and revision.')
   ],async()=>{
-    await removeMaterial(item.id);toast('PDF deleted.');
-  },'Delete PDF');
-  return [
-    el('div',{class:'flex between'},paragraph('Upload existing resumes and cover letters. MeshJob extracts text in Chrome.'),button('Add PDF',()=>materialDialog(),'primary')),
-    rows.length?dataTable(['Material','Type',''],rows.map(item=>[
-      el('div',{class:'stack',style:'gap:2px'},el('strong',{},item.label),paragraph(item.name+' · revision '+item.revision,'meta')),
-      item.type==='resume'?'Resume':'Cover letter',
-      el('div',{class:'actions'},button('Preview PDF',()=>pdfPreview(item)),button('Edit',()=>materialDialog(item)),button('Delete',()=>remove(item),'danger'))
-    ])):paragraph('No PDF materials yet.','meta'),
-    rows.length>0&&buildForm(el('div',{class:'form-grid'},defaultSelect('defaultResume','Default resume',rows.filter(row=>row.type==='resume'),config.defaultResume),
-      defaultSelect('defaultCover','Default cover letter',rows.filter(row=>row.type==='cover'),config.defaultCover)),async values=>{
-      await rpc('settings:update',{config:values});toast('Defaults saved.');
-    },'Save defaults')
-  ];
+    await removeMaterial(item.id);toast('Document deleted.');
+  },'Delete document');
+  return ['resume','cover'].map(type=>{
+    const label=type==='resume'?'Resume':'Cover letter';
+    const items=rows.filter(row=>row.type===type);
+    const key=type==='resume'?'defaultResume':'defaultCover';
+    return el('div',{class:'document-group stack'},
+      el('div',{class:'flex between'},el('h3',{},type==='resume'?'Resumes':'Cover letters'),button('Add '+label.toLowerCase(),()=>materialDialog(type))),
+      items.length?el('ul',{class:'clean-list'},items.map(item=>el('li',{class:'flex between'},
+        el('div',{},el('strong',{},item.label),paragraph(item.name+' · revision '+item.revision,'meta')),
+        el('div',{class:'actions'},button('Preview PDF',()=>pdfPreview(item)),button('Edit',()=>materialDialog(type,item)),button('Delete',()=>remove(item),'danger'))
+      ))):paragraph('No '+label.toLowerCase()+' PDFs yet.','meta'),
+      items.length>0&&buildForm(defaultSelect(key,'Default '+label.toLowerCase(),items,config[key]),async values=>{
+        await rpc('settings:update',{config:values});toast('Default document saved.');
+      },'Save default'));
+  });
 }
-function answerDialog(answer) {
+function answerDialog(answer,preset) {
+  const question=preset?.question??answer?.question??'';
+  const answerControl=preset?.countries?tokenField('countries','Answer',answer?.value,{
+    choices:COUNTRY_OPTIONS,custom:false
+  }).root:field('Answer',textarea('value',answer?.value??'',{required:true,maxlength:6000}));
+  const choices=preset?.choices&&select(undefined,[['','Choose a suggestion'],...preset.choices],'',{'aria-label':'Suggested answers'});
+  choices?.addEventListener('change',()=>{
+    if(choices.value)answerControl.querySelector('textarea').value=choices.value;
+    choices.value='';
+  });
   formDialog(answer?'Edit verified answer':'Add verified answer',[
-    field('Exact question',textarea('question',answer?.question??'',{required:true,maxlength:420})),
-    field('Answer',textarea('value',answer?.value??'',{required:true,maxlength:6000})),
-    el('div',{class:'form-grid'},field('Scope',select('scope',['global','company','role'],answer?.scope??'global')),
+    preset?el('p',{class:'answer-question'},question):field('Exact question',textarea('question',question,{required:true,maxlength:420})),
+    choices&&field('Suggested answers',choices),answerControl,
+    !preset&&el('div',{class:'form-grid'},field('Scope',select('scope',['global','company','role'],answer?.scope??'global')),
       field('Company or role, if scoped',input('context',answer?.context,{maxlength:240})),
       field('Form control type',select('type',stages,answer?.type??'any'))),
-    check('verified','I verified this answer for the question and scope shown.',false)
-  ],async values=>{await saveAnswer({...values,id:answer?.id,verified:!!values.verified});toast('Verified answer saved.');});
+    check('verified','I verified this answer for the question shown.',false)
+  ],async values=>{
+    const value=preset?.countries?readTokens(values,'countries').join(', '):values.value;
+    if(structuredValue(value))throw new Error('Enter a plain-text answer.');
+    await saveAnswer({...values,question:preset?question:values.question,value,id:answer?.id,verified:!!values.verified});
+    toast('Verified answer saved.');
+  });
+}
+function removeAnswer(answer) {
+  formDialog('Delete verified answer',[paragraph(answer.question)],async()=>{
+    await db.answers.delete(answer.id);toast('Answer deleted.');
+  },'Delete answer');
 }
 function answersView(answers) {
+  const displayed=new Set();
+  const rows=ANSWER_PRESETS.map(preset=>{
+    const answer=answers.find(row=>row.verified&&row.scope==='global'&&fieldQuestion(row.questionKey)===fieldQuestion(preset.question));
+    if(answer)displayed.add(answer.id);
+    return el('li',{class:'answer-row'},el('span',{},preset.question),
+      answer?badge(answer.value):el('span',{class:'meta'},'Not set'),
+      button(answer?'Edit':'Set answer',()=>answerDialog(answer,preset),'quiet',{'aria-label':(answer?'Edit answer: ':'Set answer: ')+preset.question}),
+      answer&&button('Remove',()=>removeAnswer(answer),'quiet',{'aria-label':'Remove answer: '+preset.question}));
+  });
+  const custom=answers.filter(answer=>!displayed.has(answer.id));
   return [
-    el('div',{class:'flex between'},paragraph('Exact, verified answers can fill matching application questions.'),button('Add answer',()=>answerDialog(),'primary')),
-    answers.length?dataTable(['Question','Scope',''],answers.map(answer=>[
-      answer.question,answer.scope+(answer.context?' · '+answer.context:''),
-      el('div',{class:'actions'},button('Edit',()=>answerDialog(answer)),button('Delete',()=>formDialog('Delete verified answer',[
-        paragraph(answer.question)
-      ],async()=>{await db.answers.delete(answer.id);toast('Answer deleted.');},'Delete answer'),'danger'))
-    ])):paragraph('No verified answers yet.','meta')
+    el('div',{class:'flex between'},paragraph('Saved answers are optional and require your confirmation.'),button('Add custom answer',()=>answerDialog())),
+    el('h3',{},'Work eligibility and equal employment'),el('ul',{class:'clean-list'},rows),
+    custom.length>0&&el('h3',{},'Custom answers'),
+    custom.length>0&&el('ul',{class:'clean-list'},custom.map(answer=>el('li',{class:'answer-row'},
+      el('span',{},answer.question,el('small',{class:'block'},answer.context||answer.scope)),
+      badge(answer.value),button('Edit',()=>answerDialog(answer),'quiet'),button('Remove',()=>removeAnswer(answer),'quiet'))))
   ];
 }
 function operation(label,type) {
@@ -316,8 +351,8 @@ function localData({backup,storageHelp}) {
 export function profileView({config,materials,answers,health,usage},controls) {
   const parts=[
     buildForm(preferencesForm(config.preferences),async values=>{await rpc('settings:update',{config:{preferences:readPreferences(values)}});toast('Search preferences saved.');},'Save preferences'),
-    [factsForm(config),profileHistory(config.profile,'education'),profileHistory(config.profile,'experience')],
-    materialsView(config,materials),answersView(answers),integrations(config,health),schedules(config,usage),localData(controls)
+    [factsForm(config),profileHistory(config.profile,'education'),profileHistory(config.profile,'experience'),skillsForm(config.profile)],
+    documentsView(config,materials),answersView(answers),integrations(config,health),schedules(config,usage),localData(controls)
   ];
   return el('div',{},el('header',{class:'page-head'},el('div',{},el('h1',{},'Profile'),paragraph('Manage what MeshJob uses for discovery, autofill, and tracking.'))),
     el('div',{class:'layout'},el('aside',{class:'sidebar'},el('nav',{class:'profile-nav','aria-label':'Profile sections'},labels.map((label,i)=>

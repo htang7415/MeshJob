@@ -25,7 +25,7 @@ async function dashboard(hash='') {
 }
 chrome.action.onClicked.addListener(tab=>{
   const url=httpUrl(tab.url);
-  if (url && (/greenhouse\.io|ashbyhq\.com|lever\.co|myworkdayjobs\.com|linkedin\.com/.test(url.hostname) ||
+  if (url && (/(?:^|\.)(?:greenhouse\.io|ashbyhq\.com|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|linkedin\.com)$/.test(url.hostname) ||
     /\/(?:jobs?|careers?|apply|application|positions?)(?:[/?#]|$)/i.test(url.pathname))) {
     void chrome.sidePanel.open({tabId:tab.id}).catch(()=>dashboard());
   } else void dashboard();
@@ -331,7 +331,7 @@ const handlers={
     await formContext(message,app);
     const config=await settings(), provider=await claudeFor(config,null);
     if(!provider) throw new Error('Connect Claude in Profile.');
-    const fields=message.fields.filter(field=>!field.critical&&!field.consent&&!['password','file','radio','checkbox'].includes(field.type))
+    const fields=message.fields.filter(field=>!field.critical&&!field.consent&&!['password','file','radio','checkbox','skill-picker'].includes(field.type))
       .slice(0,25).map(({id,label,options,type})=>({id,label:String(label).slice(0,240),type,options:options.slice(0,12)}));
     if(!fields.length) return [];
     return message.draft?provider.draftAnswers({fields:fields.filter(field=>field.type==='textarea'),facts:relevantFacts(config.profile),role:app.title}):

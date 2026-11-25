@@ -1,18 +1,18 @@
 import { liveQuery } from 'dexie';
 import { db, settings } from './db.js';
-import { discoveryRank } from './discovery.js';
-import { freshness, httpUrl, list, normalized, preferenceDecision, STAGES, uid } from './domain.js';
+import { freshness, httpUrl, normalized, preferenceDecision, STAGES, uid } from './domain.js';
 import { detectSource } from './sources.js';
-import { analyze } from './stats.js';
+import { analyze, statsPeriod } from './stats.js';
 import { changeStage, saveApplication, undoEvent } from './tracker.js';
 import { applicationCSV, csvPreview, eventsCSV, importApplicationCSV, jobsCSV, makeBackup, readSources, sourcePack, sourcesCSV } from './portability.js';
-import { blank,badge,button,check,dataTable,dateLabel,download,el,field,formDialog,input,link,money,option,paragraph,permit,rpc,section,select,task,textarea,toast } from './ui.js';
+import { blank,badge,button,check,dataTable,dateLabel,download,el,field,formDialog,input,link,paragraph,permit,rpc,section,select,task,textarea,toast } from './ui.js';
 import { preferencesForm, profileView, readPreferences } from './profile.js';
+import { EXPERIENCE_LEVELS, PRIORITIES, WORKPLACE_TYPES } from './preferences.js';
 
 const root=document.querySelector('#app');
 const tabs=['Discover','Tracker','Stats','Profile'];
-const view={query:'',age:'current',sponsorship:'',employment:'',workMode:'',includeApplied:false,showHidden:false,
-  trackQuery:'',stage:'',includeResolved:false,filterExpanded:false,limit:70};
+const view={query:'',sort:'recent',verifiedOnly:false,includeApplied:false,showHidden:false,
+  trackQuery:'',stage:'',includeResolved:false,trackerMode:'table',month:new Date(),statsRange:'all',filterExpanded:false,limit:70};
 let shell,main,nav,modeButton,subscription,routeData,routeKey;
 const selected=()=>tabs.find(title=>title.toLowerCase()===location.hash.slice(1).split('/')[0])??'Discover';
 const detail=()=>location.hash.split('/')[1];
@@ -23,7 +23,6 @@ const stageStyle=stage=>['Applied','OA','Interview','Offer','Accepted'].includes
 const smallSearch=(id,value,label,fn)=>input(id,value,{id,type:'search',placeholder:label,'aria-label':label,oninput:event=>fn(event.target.value)});
 const origin=url=>new URL(url).origin+'/*';
 const niceAge={verified:'Verified recent',detected:'Newly detected',unknown:'Date unverified',older:'Older posting'};
-const isModal=()=>!!document.querySelector('dialog[open]');
 const pageHead=(title,subtitle,actions)=>el('header',{class:'page-head'},el('div',{},el('h1',{},title),paragraph(subtitle)),actions&&el('div',{class:'actions'},actions));
 
 function runDialog(label,type,args,message) {
@@ -70,8 +69,8 @@ async function pageData(tab) {
     return {config,apps,events};
   }
   if(tab==='Stats') {
-    const [applications,events,jobs,sources,usage]=await Promise.all([db.applications.toArray(),db.events.toArray(),db.jobs.toArray(),db.sources.toArray(),db.usage.toArray()]);
-    return {config,metrics:analyze({applications,events,jobs,sources,usage})};
+    const [applications,events]=await Promise.all([db.applications.toArray(),db.events.toArray()]);
+    return {config,applications,events};
   }
   const [materials,answers,health,usage]=await Promise.all([db.materials.toArray(),db.answers.toArray(),db.runtime.get('health:gmail'),db.usage.toArray()]);
   return {config,materials,answers,health,usage};
@@ -92,7 +91,7 @@ function render(data,force=false) {
   }
   const tab=selected();
   if(!force&&!location.hash.startsWith('#profile')&&main.contains(document.activeElement)&&document.activeElement?.matches('button,a')&&document.querySelector('#view-results')) {
-    if(!document.activeElement.closest('#view-results')) redrawResults();
+    redrawResults();
     return;
   }
   const content=tab==='Discover'?discover(data):tab==='Tracker'?tracker(data):tab==='Stats'?stats(data):profileView(data,{backup,storageHelp});
@@ -186,19 +185,17 @@ function discover(data) {
         event.currentTarget.setAttribute('aria-expanded',String(view.filterExpanded));
       },'filter-toggle',{'aria-controls':'discovery-options','aria-expanded':String(view.filterExpanded)}),
       el('div',{class:'stack filter-options',id:'discovery-options'},
-        field('Posting date',select('freshness',[['current','Recent and undated'],['verified','Verified recent'],['detected','Newly detected'],['unknown','Unverified date'],['all','All dates']],view.age)),
-        field('Sponsorship',select('visa',[['','Any evidence'],['Confirmed','Confirmed'],['Likely','Likely'],['Unknown','Unknown'],['Not Supported','Not supported']],view.sponsorship)),
-        field('Work arrangement',select('arrangement',[['','Any arrangement'],'Remote','Hybrid','On-site'],view.workMode)),
-        field('Employment type',select('employment',[['','Any type'],'Full-time','Part-time','Internship','Contract','Temporary'],view.employment)),
+        field('Sort by',select('discoverSort',[['recent','Most recent'],['match','Best match']],view.sort)),
+        check('verifiedOnly','Verified posting dates only',view.verifiedOnly),
         check('applied','Show tracked jobs',view.includeApplied),check('hidden','Show hidden jobs',view.showHidden),
-        el('small',{},'Freshness window · '+config.preferences.freshnessHours+' hours')),
+        el('a',{href:'#profile',class:'text-link'},'Edit preferences')),
       errorSources.length>0&&button(errorSources.length+' source'+(errorSources.length===1?'':'s')+' need attention',()=>sourceDialog(data),'danger'),
       scheduled&&paragraph(scheduled,'meta'),missed&&paragraph('Missed Claude slots · '+missed.day+' · '+missed.slots.join(', '),'meta')),filtered)
   );
 }
 root.addEventListener('change',event=>{
   const target=event.target;
-  const keys={freshness:'age',visa:'sponsorship',arrangement:'workMode',employment:'employment',applied:'includeApplied',hidden:'showHidden',trackerStage:'stage',resolved:'includeResolved'};
+  const keys={discoverSort:'sort',verifiedOnly:'verifiedOnly',applied:'includeApplied',hidden:'showHidden',trackerStage:'stage',resolved:'includeResolved'};
   const viewKey=keys[target.name];
   if(!viewKey||target.closest('dialog')||selected()==='Profile') return;
   view[viewKey]=target.type==='checkbox'?target.checked:target.value;
@@ -214,15 +211,15 @@ function filteredJobs(data) {
     if(!job.active&&!job.lead||job.hidden&&!view.showHidden||tracked.has(job.id)&&!view.includeApplied) return false;
     if(!preferenceDecision(job,config.preferences).eligible) return false;
     if(query&&!normalized([job.title,job.company,job.location].join(' ')).includes(query)) return false;
-    if(view.sponsorship&&(job.sponsorship?.status??'Unknown')!==view.sponsorship) return false;
-    if(view.workMode&&normalized(job.workMode)!==normalized(view.workMode)) return false;
-    if(view.employment&&normalized(job.employmentType)!==normalized(view.employment)) return false;
     const age=freshness(job,config.preferences.freshnessHours);
-    return view.age==='all'||view.age==='current'&&age!=='older'||age===view.age;
+    return view.verifiedOnly?age==='verified':age!=='older';
   }).sort((a,b)=>{
     if(a.id===targeted) return -1;if(b.id===targeted) return 1;
-    const rank=discoveryRank(a,config)-discoveryRank(b,config);
-    return rank || (b.postedAt||b.firstSeenAt).localeCompare(a.postedAt||a.firstSeenAt) || a.title.localeCompare(b.title);
+    if(view.sort==='match') {
+      const difference=(b.match?.score??-1)-(a.match?.score??-1);
+      if(difference) return difference;
+    }
+    return (b.postedAt||b.firstSeenAt||'').localeCompare(a.postedAt||a.firstSeenAt||'') || a.title.localeCompare(b.title);
   });
 }
 function discoverResults(data) {
@@ -234,7 +231,7 @@ function discoverResults(data) {
     el('div',{class:'results-bar'},el('strong',{},jobs.length.toLocaleString()+' '+(jobs.length===1?'job':'jobs')),el('span',{class:'meta'},active+' active '+(active===1?'source':'sources'))),
     jobs.length?el('ul',{class:'result-list','aria-label':'Discovered jobs'},subset.map(job=>jobRow(job,data.config,tracked.get(job.id)))) :
       blank(active?'No jobs match these filters':'Connect a job source',active?'Clear temporary filters or check back after a complete source refresh.':'Choose company boards, a supported feed, or import a job you found elsewhere.',
-        active?button('Clear filters',()=>{Object.assign(view,{query:'',age:'current',sponsorship:'',employment:'',workMode:''});render(data,true);}):
+        active?button('Clear filters',()=>{Object.assign(view,{query:'',sort:'recent',verifiedOnly:false,includeApplied:false,showHidden:false});render(data,true);}):
           button('Browse sources',()=>sourceDialog(data),'primary')),
     jobs.length>subset.length&&el('div',{class:'actions',style:'margin-top:12px'},button('Show '+Math.min(70,jobs.length-subset.length)+' more',()=>{view.limit+=70;redrawResults();}))
   ].filter(Boolean);
@@ -271,7 +268,7 @@ function jobDetails(job,config) {
     job.evidence&&paragraph(job.evidence),
     sponsor?.items?.length>0&&el('ul',{class:'stack'},sponsor.items.map(item=>el('li',{},item.scope+' · '+item.text,' ',link('Evidence',item.url)))),
     job.match?el('div',{class:'stack'},el('h3',{},job.match.score+' / 100 match · '+job.match.confidence+' confidence'),
-      paragraph('Skills '+job.match.skills+' · Experience '+job.match.experience+' · Seniority '+job.match.seniority+' · Domain '+job.match.domain),
+      paragraph('Skills '+job.match.skills+' · Experience '+job.match.experience+' · Experience level '+job.match.seniority+' · Domain '+job.match.domain),
       el('ul',{},[...job.match.strengths,...job.match.gaps].map(item=>el('li',{},item)))):paragraph(job.analysisError||'This job is unscored.'),
     job.jd&&el('details',{},el('summary',{},'Job description excerpt'),paragraph(job.jd.slice(0,12500),'meta')),
     el('div',{class:'actions'},link(job.official?'Apply':'Open source',job.url,'button primary'),
@@ -378,39 +375,102 @@ function sourceImport() {
   },'Preview sources');
 }
 function tracker(data) {
-  return el('div',{},
-    pageHead('Tracker','Manage application history and follow-ups.',[
+  return el('div',{class:'stack large'},
+    pageHead('Tracker','Applications and follow-ups',[
       button('Import CSV',()=>applicationImport()),button('Export',()=>exportDialog(data)),
       button('Add application',()=>applicationEditor(),'primary')
     ]),
-    el('div',{class:'layout'},el('aside',{class:'sidebar stack','aria-label':'Tracker filters'},
-      el('h2',{},'Filters'),
-      field('Search',smallSearch('tracker-query',view.trackQuery,'Company, title, or notes',value=>{view.trackQuery=value;view.limit=70;redrawResults();})),
-      field('Stage',select('trackerStage',[['','All stages'],...STAGES],view.stage)),check('resolved','Show resolved actions',view.includeResolved),
-      button('Action Required',()=>document.querySelector('#action-queue')?.scrollIntoView({block:'start'}),'quiet')),
-    el('div',{id:'view-results',class:'stack large'},trackerResults(data)))
+    el('div',{class:'toolbar'},el('div',{class:'segmented','aria-label':'Tracker view'},[
+      ['table','Table'],['status','Status'],['calendar','Calendar']
+    ].map(([key,label])=>button(label,event=>{
+      view.trackerMode=key;view.limit=70;
+      for(const control of event.currentTarget.parentElement.children)control.setAttribute('aria-pressed',String(control===event.currentTarget));
+      redrawResults();
+    },'',{'aria-pressed':String(view.trackerMode===key)}))),
+      smallSearch('tracker-query',view.trackQuery,'Search applications',value=>{view.trackQuery=value;view.limit=70;redrawResults();}),
+      select('trackerStage',[['','All statuses'],...STAGES],view.stage,{'aria-label':'Filter by status'}),
+      button('Action required',()=>{const queue=document.querySelector('#action-queue');if(queue){queue.open=true;queue.scrollIntoView({block:'start'});}},'quiet')),
+    el('div',{id:'view-results',class:'stack large'},trackerResults(data))
   );
 }
 const matchingApps=apps=>apps.filter(app=>(!view.stage||view.stage===app.status)&&
-  (!view.trackQuery||normalized([app.company,app.title,app.requisition,app.notes].join(' ')).includes(normalized(view.trackQuery))))
-  .sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+  (!view.trackQuery||normalized([app.company,app.title,app.requisition,app.location,app.notes,app.source].join(' ')).includes(normalized(view.trackQuery))))
+  .sort((a,b)=>(b.appliedAt||b.updatedAt).localeCompare(a.appliedAt||a.updatedAt));
+
+const dateOnly=new Intl.DateTimeFormat(undefined,{dateStyle:'medium'});
+const shortDate=timestamp=>timestamp?dateOnly.format(new Date(timestamp)):'—';
+const openApplication=(app,label=app.title)=>button(label,()=>showApplication(app),'quiet application-link',{
+  'aria-label':label===app.title?app.title:'Open '+app.company
+});
+const applicationStatus=app=>el('div',{class:'inline-group'},badge(app.status,stageStyle(app.status)),
+  app.submission==='needs_check'&&badge('Needs Check','warn'),app.review&&badge('Conflict','warn'));
+function applicationTable(apps,total) {
+  return dataTable(['Company','ID','Job title','Experience level','Priority','Location','Applied date','Job URL','Resume','Status','Source'],
+    apps.map(app=>[
+      openApplication(app,app.company),app.requisition||'—',openApplication(app),
+      app.seniority||'—',app.priority?badge(app.priority,app.priority==='High'?'warn':'muted'):'—',
+      el('div',{},app.location||app.workMode||'—',app.workMode&&app.location&&app.workMode!==app.location&&el('small',{class:'block'},app.workMode)),
+      shortDate(app.appliedAt),app.url?link('Open job',app.url,'text-link'):'—',
+      app.materials?.resume?.name||'—',applicationStatus(app),app.source||'—'
+    ]),total.toLocaleString()+' applications','tracker-table');
+}
+function statusBoard(apps) {
+  return el('div',{class:'status-board'},STAGES.map(status=>{
+    const group=apps.filter(app=>app.status===status);
+    return group.length>0&&el('section',{class:'status-group'},
+      el('h3',{},status,' ',el('small',{},group.length)),
+      el('ul',{class:'clean-list'},group.map(app=>el('li',{},openApplication(app),
+        el('small',{class:'block'},app.company+(app.appliedAt?' · '+shortDate(app.appliedAt):'')))))
+    );
+  }));
+}
+function applicationCalendar(apps) {
+  const {month}=view;
+  const first=new Date(month.getFullYear(),month.getMonth(),1);
+  const count=new Date(first.getFullYear(),first.getMonth()+1,0).getDate();
+  const offset=(first.getDay()+6)%7;
+  const localKey=date=>[date.getFullYear(),date.getMonth(),date.getDate()].join('/');
+  const byDay=new Map();
+  for(const app of apps) {
+    if(!app.appliedAt)continue;
+    const key=localKey(new Date(app.appliedAt));
+    const group=byDay.get(key)??[];
+    group.push(app);byDay.set(key,group);
+  }
+  const shift=amount=>{view.month=new Date(first.getFullYear(),first.getMonth()+amount,1);redrawResults();};
+  const title=new Intl.DateTimeFormat(undefined,{month:'long',year:'numeric'}).format(first);
+  const headings=Array.from({length:7},(_,i)=>new Intl.DateTimeFormat(undefined,{weekday:'short'}).format(new Date(2026,0,5+i)));
+  return el('section',{class:'section tracker-calendar','aria-label':'Application calendar'},
+    el('div',{class:'flex between'},el('h2',{},title),el('div',{class:'actions'},
+      button('‹',()=>shift(-1),'icon',{'aria-label':'Previous month'}),button('Today',()=>{view.month=new Date();redrawResults();}),
+      button('›',()=>shift(1),'icon',{'aria-label':'Next month'}))),
+    el('div',{class:'calendar-grid'},headings.map(text=>el('div',{class:'calendar-weekday'},text)),
+      Array.from({length:Math.ceil((offset+count)/7)*7},(_,i)=>{
+        const number=i-offset+1;
+        const date=new Date(first.getFullYear(),first.getMonth(),number);
+        const items=byDay.get(localKey(date))??[];
+        return number<1||number>count?el('div',{class:'calendar-outside','aria-hidden':'true'}):
+          el('div',{class:'calendar-day '+(localKey(date)===localKey(new Date())?'calendar-today':''),'aria-label':shortDate(date)},
+            el('span',{},number),items.map(app=>openApplication(app,app.company)));
+      })));
+}
 function trackerResults(data) {
   const reversed=new Set(data.events.filter(event=>event.kind==='undo').map(event=>event.reverses));
   const pending=data.events.filter(event=>event.urgent&&!reversed.has(event.id)&&(view.includeResolved||!event.resolvedAt));
   const unlinked=data.events.filter(event=>!event.urgent&&event.review&&!event.applicationId&&!reversed.has(event.id));
   const apps=matchingApps(data.apps);
   const appNames=new Map(data.apps.map(app=>[app.id,app.company+' · '+app.title]));
+  const openActions=pending.filter(event=>!event.resolvedAt).length;
+  const contents=view.trackerMode==='calendar'?applicationCalendar(apps):
+    apps.length?(view.trackerMode==='status'?statusBoard(apps.slice(0,view.limit)):applicationTable(apps.slice(0,view.limit),apps.length)):
+      blank('No applications here',view.trackQuery||view.stage?'Adjust the search or status filter.':'Saved jobs and prepared applications appear here.',button('Add application',()=>applicationEditor(),'primary'));
   return [
-    el('section',{class:'section',id:'action-queue'},el('div',{class:'flex between'},el('h2',{},'Action Required'),badge(String(pending.filter(e=>!e.resolvedAt).length),'hot')),
-      pending.length?el('ul',{class:'actions-list'},pending.sort((a,b)=>b.at.localeCompare(a.at)).map(event=>actionRow(event,appNames))):paragraph('No open action items.')),
+    el('details',{class:'section tracker-queue',id:'action-queue',open:openActions>0||detail()==='actions'||view.includeResolved},
+      el('summary',{},'Action required ',openActions>0&&badge(String(openActions),'hot')),check('resolved','Show resolved actions',view.includeResolved),
+      pending.length?el('ul',{class:'actions-list'},pending.sort((a,b)=>b.at.localeCompare(a.at)).map(event=>actionRow(event,appNames))):paragraph('No open actions.')),
     unlinked.length>0&&section('Email review',el('ul',{class:'actions-list'},unlinked.slice(0,30).map(event=>actionRow(event,appNames)))),
-    apps.length?dataTable(['Application','Stage','Submission','Updated'],apps.slice(0,view.limit).map(app=>[
-      el('div',{class:'stack',style:'gap:3px'},button(app.title,()=>showApplication(app),'quiet',{style:'padding:0;min-height:0;justify-content:start;text-align:left'}),el('span',{class:'meta'},app.company)),
-      el('div',{class:'inline-group'},badge(app.status,stageStyle(app.status)),app.review&&badge('Conflict','warn')),
-      app.submission==='needs_check'?badge('Needs Check','warn'):app.appliedAt?dateLabel(app.appliedAt):'—',
-      timestamp(app.updatedAt)
-    ]),apps.length+' applications') : blank('No applications here',view.trackQuery||view.stage?'Adjust the search or stage filter.':'Saved jobs and prepared applications appear here.',button('Add application',()=>applicationEditor(),'primary')),
-    apps.length>view.limit&&button('Show more applications',()=>{view.limit+=70;redrawResults();})
+    contents,
+    view.trackerMode!=='calendar'&&apps.length>view.limit&&button('Show more applications',()=>{view.limit+=70;redrawResults();})
   ].filter(Boolean);
 }
 function actionRow(event,appNames) {
@@ -440,13 +500,20 @@ async function emailReview(event) {
     toast('Email linked.');
   },'Link email');
 }
+function pickOptional(name,label,options,current) {
+  const values=current&&!options.includes(current)?[...options,current]:options;
+  return field(label,select(name,[['','Not set'],...values],current??''));
+}
 function applicationEditor(app) {
   const formFields={};
   for(const [name,value] of Object.entries({company:app?.company,title:app?.title,url:app?.url,requisition:app?.requisition,location:app?.location,source:app?.source})) {
     formFields[name]=input(name,value,{required:['company','title'].includes(name),type:name==='url'?'url':'text'});
   }
   const {dialog}=formDialog(app?'Edit application':'Add application',[
-    el('div',{class:'form-grid'},field('Company',formFields.company),field('Job title',formFields.title),field('Job URL',formFields.url),field('Requisition ID',formFields.requisition),field('Location',formFields.location),field('Source',formFields.source)),
+    el('div',{class:'form-grid'},field('Company',formFields.company),field('Job title',formFields.title),field('Job URL',formFields.url),field('Requisition ID',formFields.requisition),field('Location',formFields.location),field('Source',formFields.source),
+      pickOptional('seniority','Experience level',EXPERIENCE_LEVELS,app?.seniority),
+      pickOptional('workMode','Workplace type',WORKPLACE_TYPES,app?.workMode),
+      pickOptional('priority','Priority',PRIORITIES,app?.priority)),
     button('Read public job URL',task(async()=>{
       const url=formFields.url.value;const parsed=httpUrl(url);
       if(!parsed||parsed.protocol!=='https:')throw new Error('Enter an HTTPS job URL.');
@@ -461,7 +528,11 @@ function applicationEditor(app) {
   ],async values=>{
     const result=await saveApplication(values,{existingId:app?.id});
     if(result.duplicate&&!app){toast('This requisition is already tracked.');dialog.close();showApplication(result.application);return false;}
-    if(!app&&values.stage&&values.stage!=='Saved') await changeStage(result.application.id,values.stage,values.date?new Date(values.date).toISOString():undefined);
+    if(!app&&values.date) {
+      const applied=new Date(values.date).toISOString();
+      await changeStage(result.application.id,'Applied',applied);
+      if(!['Saved','Preparing','Applied'].includes(values.stage)) await changeStage(result.application.id,values.stage);
+    } else if(!app&&values.stage&&values.stage!=='Saved') await changeStage(result.application.id,values.stage);
     if(result.similar) toast('Saved separately. A similar company and role already exists.');
     else toast(app?'Application updated.':'Application added.');
   });
@@ -534,29 +605,21 @@ function exportDialog(data) {
       button('Full backup ZIP',task(backup),'primary'))
   ]);
 }
-function stats({metrics:m}) {
-  const {overall}=m;
-  const pct=(n,total)=>total?(100*n/total).toFixed(1)+'% ('+n+'/'+total+')':'—';
-  const metric=(label,value)=>el('div',{class:'metric'},el('strong',{},value),el('span',{},label));
-  const elapsed=value=>value==null?'—':value>=60_000?(value/60_000).toFixed(1)+' min':(value/1000).toFixed(2)+' s';
-  const breakdown=(title,rows)=>el('details',{class:'section',open:rows.length>0&&rows.length<8},el('summary',{},title),
-    rows.length?dataTable(['Group','Submitted','OA','Interview','Offer','Accepted'],rows.slice(0,100).map(row=>[
-      row.label,row.applications,row.OA,pct(row.interviews,row.applications),pct(row.offers,row.applications),row.accepted
-    ])):paragraph('No submissions in this group.'));
+function stats({applications,events}) {
+  const range=statsPeriod(view.statsRange);
+  const {overall}=analyze({applications,events,range});
+  const metric=(label,value)=>el('div',{class:'metric'},el('strong',{},value.toLocaleString()),el('span',{},label));
+  const percentage=value=>overall.applications?new Intl.NumberFormat(undefined,{style:'percent',maximumFractionDigits:1}).format(value/overall.applications):'—';
   return el('div',{class:'stack large'},
-    pageHead('Stats','See what you submitted, how those applications progressed, and where your time went.'),
-    el('div',{class:'metrics'},metric('Submitted',overall.applications),metric('Saved or preparing',m.drafts),metric('Reached interview',overall.interviews),
-      metric('Reached offer',overall.offers),metric('Accepted',overall.accepted)),
-    section('Application outcomes',paragraph('Rates use distinct submitted applications as the denominator. An application can reach more than one stage.'),
-      dataTable(['Outcome','Applications','Rate'],[['Assessment',overall.OA],['Interview',overall.interviews],['Offer',overall.offers],['Rejected',overall.rejected],['Withdrawn',overall.withdrawn],['Accepted',overall.accepted]].map(([name,count])=>[name,count,pct(count,overall.applications)]))),
-    section('Discovery and autofill timing',dataTable(['Metric','Samples','P50','P95'],[
-      ['Verified posting to first observation',m.postingToDiscovery],['Board observation interval',m.observationWindow],
-      ['First observation to submission',m.discoveryToApplication],['Active form fill',m.activeAutofill]
-    ].map(([name,row])=>[name,row.count,elapsed(row.p50),elapsed(row.p95)]))),
-    m.sources.length>0&&section('Public sources',dataTable(['Source','Unique jobs','Active','Verified samples','P95 discovery'],m.sources.map(row=>[row.name,row.unique,row.active,row.latency.count,elapsed(row.latency.p95)]))),
-    breakdown('By week of submission',m.weeks),breakdown('By day of submission',m.days),breakdown('By role',m.roles),
-    breakdown('By resume',m.resumes),breakdown('By cover letter',m.coverLetters),breakdown('By source',m.applicationSources),
-    section('Claude usage',m.usage.length?dataTable(['Month','Requests','Web searches','Estimated cost','Reserved or unpriced'],
-      m.usage.map(row=>[row.month,row.requests,row.searches,money(row.cost),money(row.pending)])):paragraph('No Claude usage recorded.'))
+    pageHead('Stats',range.label,el('div',{class:'segmented','aria-label':'Stats period'},
+      [['week','Week'],['month','Month'],['year','Year'],['all','All']].map(([key,label])=>button(label,()=>{
+        view.statsRange=key;render(routeData,true);
+        main.querySelector('.segmented [aria-pressed=true]')?.focus();
+      },'',{'aria-pressed':String(view.statsRange===key)})))),
+    el('div',{class:'metrics'},metric('Applications',overall.applications),metric('Interviews',overall.interviews),metric('Offers',overall.offers),metric('Accepted',overall.accepted)),
+    section('Outcomes',overall.applications?
+      dataTable(['Stage reached','Applications','Share'],[['Assessment',overall.OA],['Interview',overall.interviews],['Offer',overall.offers],
+        ['Rejected',overall.rejected],['Withdrawn',overall.withdrawn],['Accepted',overall.accepted]].map(([name,count])=>[name,count,percentage(count)])):
+      paragraph('No submitted applications in this period.'))
   );
 }

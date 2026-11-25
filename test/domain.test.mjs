@@ -150,3 +150,52 @@ test('a truncated RSS document cannot replace a complete snapshot',async()=>{
   const source=detectSource('https://example.com/feed');
   await assert.rejects(()=>collect(source,{fetcher:async()=>new Response('<rss><channel><item><title>Partial</title><link>https://example.com/jobs/1</link></item>')}),/incomplete/);
 });
+
+test('saved profile values stay plain and only explicit work details fill guarded controls',async()=>{
+  const {distinctValues,structuredValue}=await import('../src/domain.js');
+  const {ANSWER_PRESETS, createFillPlan, fieldQuestion, criticalField}=await import('../src/form-rules.js');
+  assert.equal(structuredValue('[{"interestingType":"INDUSTRY","_delete":true}]'),true);
+  assert.deepEqual(distinctValues('[{"interestingType":"INDUSTRY"},{"id":"2"}]'),[]);
+  assert.deepEqual(distinctValues('Python,PyTorch,python,C++,C#'),['Python','PyTorch','C++','C#']);
+  assert.equal(ANSWER_PRESETS.length,14);
+  assert.ok(criticalField('Do you identify as LGBTQ+?'));
+  assert.equal(fieldQuestion('Are you a U.S. citizen?'),fieldQuestion('Are you a citizen of the United States?'));
+  assert.notEqual(fieldQuestion('Are you authorized to work?'),fieldQuestion('Are you authorized to work in the United States?'));
+  const group={kind:'experience',index:0};
+  const fields=[
+    {id:'work',type:'checkbox',group,label:'I currently work here'},
+    {id:'end',type:'date',group,label:'End date'},
+    {id:'skills',type:'skill-picker',label:'Skills',filled:true},
+    {id:'notmine',type:'email',label:"Recruiter's email",name:'email',autocomplete:'email'},
+    {id:'industry',type:'text',label:'Preferred industries',name:'company',autocomplete:'organization'},
+    {id:'lgbtq',type:'text',label:'Do you identify as LGBTQ+?'},
+    {id:'us',type:'radio',label:'Are you a U.S. citizen?'}
+  ];
+  const profile={experience:[{current:true,end:'2026-02-13'}],skills:['Python','C++'],email:'fixture@example.invalid',currentEmployer:'Example'};
+  const answers=[{verified:true,type:'any',scope:'global',questionKey:fieldQuestion('Are you a citizen of the United States?'),value:'Yes'}];
+  const plan=createFillPlan(fields,{profile,answers});
+  assert.deepEqual(plan.map(item=>item.id),['work','skills','us']);
+  assert.deepEqual(plan[1].skills,['Python','C++']);
+});
+
+test('experience and country selectors apply supported evidence and retain unknowns',()=>{
+  const preferences={countries:['Canada'],seniority:['Mid-Senior level'],workMode:['On-site'],locations:['Ontario']};
+  const match={title:'Software Engineer',seniority:'Senior',workMode:'Onsite',location:'Toronto',locationDetails:'Toronto, Ontario, Canada',
+    countries:['Canada'],locationCertain:true};
+  assert.ok(preferenceDecision(match,preferences).eligible);
+  assert.ok(!preferenceDecision({...match,countries:['United States']},preferences).eligible);
+  const uncertain=preferenceDecision({title:'Software Engineer'},preferences);
+  assert.ok(uncertain.eligible);assert.ok(uncertain.unknown.includes('Country'));
+});
+
+test('stats windows group applications by local submission date',async()=>{
+  const {statsPeriod,analyze}=await import('../src/stats.js');
+  const local=(m,d)=>new Date(2026,m,d,12).toISOString();
+  const apps=[{id:'week',appliedAt:local(10,25),status:'Interview'},{id:'month',appliedAt:local(10,2),status:'Offer'},
+    {id:'year',appliedAt:local(2,1),status:'Rejected'},{id:'draft',status:'Preparing'}];
+  for(const [period,total] of Object.entries({week:1,month:2,year:3,all:3})) {
+    const summary=analyze({applications:apps,events:[],range:statsPeriod(period,new Date(2026,10,25,13))});
+    assert.equal(summary.overall.applications,total,period);
+    assert.equal(summary.drafts,1);
+  }
+});

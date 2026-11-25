@@ -1,5 +1,5 @@
 import Dexie from 'dexie';
-import { DEFAULTS } from './domain.js';
+import { DEFAULTS, distinctValues, structuredValue } from './domain.js';
 
 export const db = new Dexie('meshjob');
 db.version(1).stores({
@@ -12,7 +12,16 @@ db.version(1).stores({
 });
 export async function settings() {
   const saved = await db.settings.get('settings');
-  return { ...DEFAULTS, ...saved, preferences:{...DEFAULTS.preferences,...saved?.preferences}, id:'settings' };
+  const preferences={...DEFAULTS.preferences,...saved?.preferences};
+  for(const [key,value] of Object.entries(DEFAULTS.preferences)) {
+    if(Array.isArray(value)) preferences[key]=distinctValues(preferences[key]);
+  }
+  const profile={...saved?.profile};
+  for(const [key,value] of Object.entries(profile)) {
+    if(key==='skills') profile.skills=distinctValues(value);
+    else if(key!=='summary'&&structuredValue(value)) profile[key]='';
+  }
+  return { ...DEFAULTS, ...saved, preferences, profile, id:'settings' };
 }
 export async function updateSettings(update) {
   return db.transaction('rw', db.settings, async () => {

@@ -197,7 +197,7 @@ async function stopFill() {
 }
 async function suggest(draft) {
   await busyWith(async()=>{
-    const fields=state.inspection.fields.filter(row=>!row.filled&&!row.disabled&&!row.critical&&!row.consent);
+    const fields=state.inspection.fields.filter(row=>!row.filled&&!row.disabled&&!row.critical&&!row.consent&&row.type!=='skill-picker');
     const results=await rpc('form:ai',{...pageRef(),fields,keys:Object.keys(PROFILE_KEYS),draft});
     const safeIds=new Set(fields.map(row=>row.id));
     const workable=results.filter(entry=>safeIds.has(entry.id)&&(draft?!!entry.answer:Object.hasOwn(PROFILE_KEYS,entry.key)&&!!state.config.profile[entry.key]));
@@ -242,7 +242,7 @@ function applicationView(inspection) {
     challenge&&activeBanner('Page challenge','Complete the challenge in the employer tab, then scan again.'),
     login&&activeBanner('Sign-in required','Sign in on the employer page using Chrome Password Manager, then scan again.'),
     registration&&activeBanner('Registration form','Review credentials and create the account yourself.'),
-    !state.app&&section('Track this application',paragraph('Save a preparing draft before filling.'),
+    !state.app&&section('Track this application',paragraph('Save a draft to start autofill on this page.'),
       state.related&&badge('Already tracked · '+state.related.status,'warn'),
       button('Prepare application',task(prepare),'primary')),
     state.app&&section('Application materials',filePicker('resume','Resume PDF'),filePicker('cover','Cover letter PDF'),

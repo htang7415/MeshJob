@@ -263,7 +263,7 @@ export async function searchNow({generation,op}={}) {
     if (!config.preferences.titles.length) throw new Error('Add target roles in Profile before searching.');
     const claude = await claudeFor(config,generation,task.signal);
     if (!claude) throw new Error('Connect Claude in Profile before running a web search.');
-    const preferences = Object.fromEntries(['titles','aliases','locations','seniority','employmentType','workMode'].map(key=>[key,config.preferences[key].slice(0,12)]));
+    const preferences = Object.fromEntries(['titles','aliases','locations','countries','seniority','employmentType','workMode'].map(key=>[key,config.preferences[key].slice(0,12)]));
     const leads = await claude.searchJobs({...preferences,freshnessHours:config.preferences.freshnessHours});
     let count=0;
     for (const lead of leads) {
