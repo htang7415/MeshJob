@@ -25,10 +25,14 @@ async function dashboard(hash='') {
 }
 chrome.action.onClicked.addListener(tab=>{
   const url=httpUrl(tab.url);
+  const refreshPanel=()=>chrome.runtime.sendMessage({type:'panel:access',tabId:tab.id,windowId:tab.windowId}).catch(()=>false);
   if (url && (/(?:^|\.)(?:greenhouse\.io|ashbyhq\.com|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|linkedin\.com)$/.test(url.hostname) ||
     /\/(?:jobs?|careers?|apply|application|positions?)(?:[/?#]|$)/i.test(url.pathname))) {
-    void chrome.sidePanel.open({tabId:tab.id}).catch(()=>dashboard());
-  } else void dashboard();
+    const openedPanel=chrome.sidePanel.open({tabId:tab.id});
+    const refreshed=refreshPanel();
+    void openedPanel.catch(async()=>{if(!await refreshed) await dashboard();});
+  } else if (url?.protocol==='https:') void refreshPanel().then(handled=>{if(!handled) return dashboard();});
+  else void dashboard();
 });
 
 chrome.notifications.onClicked.addListener(id=>{
@@ -50,6 +54,7 @@ async function sendForm(tabId,type,data={},inject=false) {
   }
   const result=await chrome.tabs.sendMessage(tabId,{type:'form:'+type,...data},{frameId:0});
   if(!result?.ok) throw new Error(result?.error||'Unable to connect to this page.');
+  if (type==='inspect' && result.value.page!==tab.url) throw new Error('The tab is opening a different page.');
   if (type!=='advance') await sameTab(tabId,type==='inspect'?tab.url:data.url);
   return result.value;
 }
@@ -300,13 +305,13 @@ const handlers={
     return {title:posting.title,company:posting.company,location:posting.location,url:target.href,requisition:posting.externalId};
   },
   'form:inspect':async message=>{
-    const inspection=await sendForm(message.tabId,'inspect',{},true);
+    const inspection=await sendForm(message.tabId,'inspect',{watch:!!message.watch},true);
     const {descriptionHtml,...job}=inspection.job;
     inspection.job={...job,jd:descriptionHtml?plain(descriptionHtml)||job.jd:job.jd};
     const local=await tabState(message.tabId);
     if(local && local.expiresAt>Date.now() && local.origin===httpUrl(inspection.page)?.origin) {
       const identity=postingIdentity(inspection.page), prior=postingIdentity(local.url);
-      if(!identity||!prior||identity.key===prior.key) inspection.sessionAppId=local.appId;
+      if(inspection.page===local.url || identity && prior && identity.key===prior.key) inspection.sessionAppId=local.appId;
     }
     return inspection;
   },
@@ -360,7 +365,7 @@ const handlers={
     await db.runtime.update('form-tab:'+message.tabId,{checkpoint:next.step});
     return next;
   },
-  'form:stop':message=>sendForm(message.tabId,'cancel'),
+  'form:stop':message=>chrome.tabs.sendMessage(message.tabId,{type:'form:cancel'},{frameId:0}),
   'form:password':async message=>{
     const state=await sameTab(message.tabId,message.page);
     const identity=postingIdentity(state.url);

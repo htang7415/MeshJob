@@ -327,7 +327,7 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
   await writeFile(manifestPath,JSON.stringify(manifest));
   const {context,dashboard,id,close}=await contextFor(dir,'fixture-profile');
   dashboard.setDefaultTimeout(6500);
-  const metrics={forms:[],workday:[],warm:[],cold:[],sandboxRequests:0,externalApplicationRequests:0};
+  const metrics={forms:[],workday:[],warm:[],cold:[],panelSync:{},sandboxRequests:0,externalApplicationRequests:0};
   let hits=0;
   try {
     await context.route(new RegExp(domains.map(origin=>origin.replaceAll('.','\\.')).join('|')),async route=>{
@@ -456,12 +456,45 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
     await guidedTarget.locator('#final').waitFor();
     assert.equal(await guidedTarget.evaluate(()=>window.meshjobSubmits),0);
     metrics.guidedReachedReview=true;
+    await panel.getByText('Review',{exact:true}).waitFor();
+    let syncStart=performance.now();
+    await guidedTarget.evaluate(()=>{setTimeout(()=>{
+      document.querySelector('h2').textContent='Additional Questions';
+      document.querySelector('#fields').innerHTML='<label>Portfolio <input required></label>';
+    },300);});
+    await panel.getByText('Additional Questions',{exact:true}).waitFor({timeout:3000});
+    await panel.getByText('1 required open',{exact:true}).waitFor({timeout:3000});
+    metrics.panelSync.delayedFormMs=performance.now()-syncStart;
+    const originalUrl=guidedTarget.url();
+    syncStart=performance.now();
+    await guidedTarget.evaluate(()=>{
+      const heading=document.querySelector('h1');
+      window.addEventListener('popstate',()=>{heading.textContent='Program Coordinator';},{once:true});
+      history.pushState({},'',location.pathname.replace('_R650','_R651')+location.search);
+      heading.textContent='Platform Engineer';
+    });
+    await panel.getByRole('heading',{name:'Platform Engineer'}).waitFor({timeout:3000});
+    await panel.getByRole('button',{name:'Prepare application'}).waitFor();
+    assert.equal(await panel.getByRole('button',{name:'Fill available fields'}).count(),0);
+    metrics.panelSync.sameTabRouteMs=performance.now()-syncStart;
+    syncStart=performance.now();
+    await guidedTarget.goBack();
+    assert.equal(guidedTarget.url(),originalUrl);
+    await panel.getByRole('heading',{name:'Program Coordinator'}).waitFor({timeout:3000});
+    await panel.getByRole('button',{name:'Fill available fields'}).waitFor();
+    metrics.panelSync.backMs=performance.now()-syncStart;
+    syncStart=performance.now();
+    await guidedTarget.reload();
+    await panel.getByText('My Information',{exact:true}).waitFor({timeout:3000});
+    metrics.panelSync.reloadMs=performance.now()-syncStart;
     await guidedTarget.close();
 
     const listing=await context.newPage();
     await listing.goto(blueYonder+'/JDA_Careers/job/Dallas/Backend-Engineer_263328-1');
+    syncStart=performance.now();
     await listing.bringToFront();
     await panel.getByText('Blue Yonder',{exact:true}).waitFor();
+    metrics.panelSync.tabSwitchMs=performance.now()-syncStart;
     await panel.getByRole('button',{name:'Prepare application'}).click();
     assert.equal(await panel.getByLabel('Company',{exact:true}).inputValue(),'Blue Yonder');
     assert.equal(await panel.getByLabel('Requisition ID').inputValue(),'263328');
@@ -469,6 +502,17 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
     await panel.getByRole('button',{name:'Save draft'}).click();
     await panel.getByText('Preparing draft saved.',{exact:true}).waitFor();
     assert.equal(await listing.url(),blueYonder+'/JDA_Careers/job/Dallas/Backend-Engineer_263328-1');
+    const ungranted='https://new-employer.example/jobs/first';
+    await context.route(ungranted,route=>route.fulfill({contentType:'text/html',body:'<h1>Job on an ungranted site</h1>'}));
+    const otherSite=await context.newPage();
+    await otherSite.goto(ungranted,{timeout:7000});
+    await otherSite.bringToFront();
+    await panel.getByRole('heading',{name:'Connect this tab'}).waitFor({timeout:3000});
+    await panel.getByText(/click the MeshJob toolbar icon/).waitFor();
+    assert.equal(await panel.getByRole('button',{name:'Prepare application'}).count(),0);
+    await listing.bringToFront();
+    await panel.getByText('Blue Yonder',{exact:true}).waitFor({timeout:3000});
+    await otherSite.close();
     await listing.close();await panel.close();
     await dashboard.getByRole('link',{name:'Tracker',exact:true}).click();
     await dashboard.getByRole('button',{name:'Backend Engineer',exact:true}).click();

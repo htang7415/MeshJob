@@ -3,50 +3,83 @@ import { canonicalUrl, httpUrl, normalized, workdayTenant } from './domain.js';
 import { createFillPlan, PROFILE_KEYS } from './form-rules.js';
 import { postingIdentity } from './sources.js';
 import { changeStage, findJob, saveApplication } from './tracker.js';
-import { badge, blank, button, el, field, formDialog, input, link, paragraph, permit, rpc, section, select, task, toast } from './ui.js';
+import { badge, button, el, field, formDialog, input, paragraph, permit, rpc, section, select, task, toast } from './ui.js';
 
 const root=document.getElementById('app');
 const state={tab:null,inspection:null,app:null,job:null,related:null,config:null,materials:[],answers:[],selected:{resume:'',cover:''},
-  drafting:[],maps:[],coverText:'',result:null,busy:false,cancelled:false,issue:'',initial:true,revision:0};
+  drafting:[],maps:[],coverText:'',result:null,busy:false,cancelled:false,issue:'',loading:true,siteAllowed:false,revision:0};
+let panelWindow, activeTab, watchedTab, watchPort, lastPage;
+let scanQueued=false, scanPending=false, autoScanning=false;
 
 const pageRef=()=>({tabId:state.tab.id,page:state.inspection.page,revision:state.inspection.revision,applicationId:state.app?.id});
 const panelName = ()=>el('span',{class:'brand'},el('img',{alt:'',src:'icons/icon32.png'}),'MeshJob');
-const taskAction=(fn,label)=>button(label,task(fn));
 const refreshDash=()=>rpc('dashboard',{hash:'#tracker'});
+function sameJob(left,right) {
+  if(!left||!right) return false;
+  const identity=postingIdentity(left);
+  return left===right || !!identity && identity.key===postingIdentity(right)?.key;
+}
 function activeBanner(title,message){
   return el('div',{class:'notice alert stack'},el('h2',{},title),paragraph(message));
 }
+function clearJob() {
+  state.app=null;state.result=null;state.related=null;state.job=null;state.maps=[];state.drafting=[];state.coverText='';
+  state.selected={resume:'',cover:''};
+}
+function watch(tabId) {
+  if(watchedTab===tabId) return;
+  watchPort?.disconnect();
+  watchPort=null;watchedTab=null;
+  if(tabId==null) return;
+  const port=chrome.tabs.connect(tabId,{name:'meshjob:watch',frameId:0});
+  watchPort=port;watchedTab=tabId;
+  port.onMessage.addListener(message=>{
+    if(port===watchPort&&message.type==='page:changed') scheduleScan();
+  });
+  port.onDisconnect.addListener(()=>{
+    void chrome.runtime.lastError;
+    if(port===watchPort) {watchPort=null;watchedTab=null;}
+  });
+}
 async function scan({keepResult=false}={}) {
   const revision=++state.revision;
-  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
-  if(revision!==state.revision)return;
-  const prior=state.tab;
-  state.tab=tab;
-  if(prior?.id!==tab?.id || (state.inspection?.page!==tab?.url&&postingIdentity(state.inspection?.page)?.key!==postingIdentity(tab?.url)?.key)) {
-    state.app=null;state.result=null;state.related=null;state.job=null;state.maps=[];state.drafting=[];state.coverText='';state.issue='';
-  }
   try {
-    if(httpUrl(tab?.url)?.protocol!=='https:') throw new Error('Open a job listing or application in the active tab.');
-    const found=await rpc('form:inspect',{tabId:tab.id});
+    const [tab]=await chrome.tabs.query({active:true,windowId:panelWindow});
+    if(revision!==state.revision || activeTab!=null && tab?.id!==activeTab)return;
+    activeTab=tab?.id;
+    if(state.tab?.id!==tab?.id || !sameJob(lastPage,tab?.url)) clearJob();
+    state.tab=tab;
+    const address=httpUrl(tab?.url);
+    state.issue='';
+    state.siteAllowed=false;
+    if(address?.protocol!=='https:') {state.inspection=null;watch(null);return;}
+    const prior=state.inspection;
+    const [found,allowed]=await Promise.all([rpc('form:inspect',{tabId:tab.id,watch:true}),
+      chrome.permissions.contains({origins:[address.origin+'/*']})]);
+    if(revision!==state.revision)return;
+    watch(tab.id);
+    const identity=postingIdentity(found.job.url);
+    const job=await findJob(identity?[identity.key]:[],[canonicalUrl(found.job.url)]).catch(()=>null);
+    const appId=found.sessionAppId || (sameJob(lastPage,found.page)?state.app?.id:null);
+    const [related,app]=await Promise.all([job?db.applications.where('jobId').equals(job.id).first():null,
+      appId?db.applications.get(appId):null]);
     if(revision!==state.revision)return;
     state.inspection=found;
-    state.issue='';
-    const identity=postingIdentity(found.job.url);
-    let job=null;
-    try {job=await findJob(identity?[identity.key]:[],[canonicalUrl(found.job.url)]);} catch (error) {state.issue=error.message;}
-    const related=job?await db.applications.where('jobId').equals(job.id).first():null;
-    if(revision!==state.revision)return;
+    state.siteAllowed=allowed;
+    if(!keepResult || prior && (prior.page!==found.page || prior.step!==found.step)) {
+      state.result=null;state.maps=[];state.drafting=[];
+    }
+    lastPage=found.page;
     state.job=job;
     state.related=related;
-    if(found.sessionAppId) state.app=await db.applications.get(found.sessionAppId)??null;
-    else if(state.app?.id) state.app=await db.applications.get(state.app.id)??null;
-    if(!keepResult) {state.result=null;state.maps=[];state.drafting=[];}
+    state.app=app??null;
     chooseDefaults(job);
   } catch(error) {
+    if(revision!==state.revision)return;
     state.inspection=null;
     state.issue=error.message;
   } finally {
-    if(revision===state.revision) {state.initial=false;render();}
+    if(revision===state.revision) {state.loading=false;render();}
   }
 }
 function chooseDefaults(job) {
@@ -59,7 +92,9 @@ function chooseDefaults(job) {
   }
 }
 async function initialize() {
-  [state.config,state.materials,state.answers]=await Promise.all([settings(),db.materials.toArray(),db.answers.toArray()]);
+  let window;
+  [state.config,state.materials,state.answers,window]=await Promise.all([settings(),db.materials.toArray(),db.answers.toArray(),chrome.windows.getCurrent()]);
+  panelWindow=window.id;
   chooseDefaults();
   await scan();
 }
@@ -88,8 +123,9 @@ function getDraftInputs(existing) {
   };
 }
 async function prepare() {
-  const recent=(await db.applications.toArray()).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,200);
   const {inspection,tab,related}=state;
+  const recent=(await db.applications.toArray()).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,200);
+  if(tab?.id!==activeTab || inspection?.page!==state.inspection?.page) return;
   const f=getDraftInputs(related);
   const association=select('existing',[['','Use this job'],...recent.map(row=>[row.id,row.company+' · '+row.title])],related?.id??'');
   formDialog('Prepare application',[
@@ -107,12 +143,14 @@ async function prepare() {
     }
     if(!inspection) {
       const result=await saveApplication(job,{stage:'Preparing',existingId:existing});
+      if(tab?.id!==activeTab) return;
       state.app=result.application;state.related=result.application;
       render();toast(result.duplicate?'Existing application opened.':'Preparing draft saved.');
       return;
     }
     if(!job.url) job.url=inspection.page;
     const result=await rpc('form:prepare',{tabId:tab.id,inspection,job,existingId:existing});
+    if(tab.id!==activeTab || inspection.page!==state.inspection?.page) return;
     state.app=result.application;state.related=result.application;
     state.result=null;
     render();
@@ -151,15 +189,18 @@ async function busyWith(fn) {
   if(state.busy) return;
   state.busy=true;state.cancelled=false;render();
   try {return await fn();}
-  finally {state.busy=false;render();}
+  catch(error) {if(!state.cancelled)throw error;}
+  finally {state.busy=false;render();if(scanPending)scheduleScan();}
 }
 async function fillPage({preview=false,rows=false,silent=false}={}) {
     const ref=pageRef();
     const inspection=state.inspection;
+    const app=state.app;
     let fields=inspection.fields;
     if(rows) fields=await rpc('form:rows',ref);
+    if(state.cancelled) return null;
     const needsType=type=>fields.some(row=>row.type==='file'&&!row.filled&&new RegExp(type==='resume'?'resume|résumé|curriculum vitae|\\bcv\\b':'cover letter','i').test(row.label+' '+row.name));
-    const plan=createFillPlan(fields,{profile:state.config.profile,answers:state.answers,job:state.app,materials:{
+    const plan=createFillPlan(fields,{profile:state.config.profile,answers:state.answers,job:app,materials:{
       resume:needsType('resume')?await serializedFile('resume'):null,cover:needsType('cover')?await serializedFile('cover'):null,coverText:state.coverText
     },maps:preview?state.maps:[],drafts:preview?state.drafting:[]});
     if(state.cancelled) return null;
@@ -169,9 +210,11 @@ async function fillPage({preview=false,rows=false,silent=false}={}) {
       return state.result;
     }
     const result=await rpc('form:fill',{...ref,plan,materials:state.selected});
+    const saved=await db.applications.get(app.id);
+    if(activeTab!==ref.tabId || state.inspection?.page!==ref.page) return null;
     state.result=result;
     state.inspection.fields=result.fields;
-    state.app=await db.applications.get(state.app.id);
+    state.app=saved;
     state.maps=[];state.drafting=[];
     if(result.cancelled)toast('Autofill stopped. Review changes already made on the page.');
     else if(!silent) toast(result.results.filter(row=>row.state==='filled').length+' fields verified on the page.');
@@ -205,6 +248,7 @@ async function suggest(draft) {
   await busyWith(async()=>{
     const fields=state.inspection.fields.filter(row=>!row.filled&&!row.disabled&&!row.critical&&!row.consent&&row.type!=='skill-picker');
     const results=await rpc('form:ai',{...pageRef(),fields,keys:Object.keys(PROFILE_KEYS),draft});
+    if(state.cancelled) return;
     const safeIds=new Set(fields.map(row=>row.id));
     const workable=results.filter(entry=>safeIds.has(entry.id)&&(draft?!!entry.answer:Object.hasOwn(PROFILE_KEYS,entry.key)&&!!state.config.profile[entry.key]));
     if(!workable.length) {toast('No usable suggestions were returned.');return;}
@@ -244,7 +288,8 @@ function applicationView(inspection) {
   return [
     el('div',{class:'stack',style:'gap:5px'},el('h1',{},title),company&&paragraph(company),
       el('div',{class:'inline-group'},badge(inspection.job.provider==='generic'?'Generic form':inspection.job.provider),
-        state.app&&badge(state.app.status,'ok'),step&&step!==title&&badge(step))),
+        state.app&&badge(state.app.status,'ok'),step&&step!==title&&badge(step)),
+      !state.siteAllowed&&el('div',{},button('Always scan this site',task(grant),'quiet'))),
     challenge&&activeBanner('Page challenge','Complete the challenge in the employer tab, then scan again.'),
     login&&activeBanner('Sign-in required','Sign in on the employer page using Chrome Password Manager, then scan again.'),
     registration&&activeBanner('Registration form','Review credentials and create the account yourself.'),
@@ -255,7 +300,7 @@ function applicationView(inspection) {
       reference('cover')?.text&&button(state.coverText?'Review approved cover letter text':'Review cover letter text',coverPreview,'quiet')),
     state.app&&section('Autofill',
       el('div',{class:'inline-group'},badge(fields.length+' controls'),badge(fields.filter(row=>row.required&&!row.filled&&!row.disabled).length+' required open','warn')),
-      fields.length===0&&paragraph('Open the application form and scan again. Embedded forms may need to be opened in their own tab.','meta'),
+      fields.length===0&&paragraph('Open the application form. MeshJob will scan once the fields appear. Embedded forms may need their own tab.','meta'),
       el('div',{class:'actions'},button('Fill available fields',task(()=>fillOne()),'primary',{disabled:state.busy||!fields.length||challenge||login||!!receipt}),
         prepareRows&&button('Add missing rows and fill',task(()=>fillOne({rows:true})),'',{disabled:state.busy||challenge}),
         registration&&button('Fill saved password',task(async()=>{const r=await rpc('form:password',pageRef());toast(r.count+' password controls filled.');}),'',{disabled:state.busy}),
@@ -275,31 +320,87 @@ function applicationView(inspection) {
         })),'',{disabled:state.busy||challenge||login}))),
     state.app&&section('Submission',
       paragraph(state.app.appliedAt?'Submission recorded.':state.app.submission==='needs_check'?'Needs Check · no ATS receipt recorded.':receipt?'A receipt is visible. Confirm it belongs to this application.':'Waiting for a verified receipt or your confirmation.'),
-      !state.app.appliedAt&&button('Confirm I submitted',()=>formDialog('Confirm submission',[
-        paragraph('Confirm that you submitted this application to '+state.app.company+'.')
-      ],async()=>{await changeStage(state.app.id,'Applied');state.app=await db.applications.get(state.app.id);render();toast('Submission recorded.');},'Confirm submitted')),
+      !state.app.appliedAt&&button('Confirm I submitted',()=>{
+        const {id,company}=state.app;
+        formDialog('Confirm submission',[paragraph('Confirm that you submitted this application to '+company+'.')],async()=>{
+          await changeStage(id,'Applied');
+          const updated=await db.applications.get(id);
+          if(state.app?.id===id){state.app=updated;render();toast('Submission recorded.');}
+        },'Confirm submitted');
+      }),
       button('Open Tracker',task(refreshDash),'quiet'))
   ];
 }
+const workspace=el('main',{class:'workspace stack'});
+root.append(el('header',{class:'app-header'},el('div',{class:'header-inner'},panelName(),
+  button('Dashboard',task(()=>rpc('dashboard')),'quiet'))),workspace);
 function render() {
-  const content=state.initial?paragraph('Scanning the active tab…'):state.inspection?applicationView(state.inspection):[
-    el('h1',{},'Application assistant'),
-    blank('Open an application tab',state.issue||'Scan a listing or application form to get started.'),
-    el('div',{class:'actions'},httpUrl(state.tab?.url)?.protocol==='https:'&&button('Grant page access',task(grant),'primary'),
-      httpUrl(state.tab?.url)&&button('Add manually',task(prepare)),button('Open Tracker',task(refreshDash)))
-  ];
-  root.replaceChildren(el('header',{class:'app-header'},el('div',{class:'header-inner'},panelName(),
-    button('Dashboard',task(()=>rpc('dashboard')),'quiet'))),
-    el('main',{class:'workspace stack'},content));
+  const address=httpUrl(state.tab?.url);
+  const needsAccess=!state.tab?.url && state.tab?.id!=null;
+  const content=state.loading?el('p',{role:'status',class:'meta'},'Scanning the active tab…'):
+    state.inspection?applicationView(state.inspection):[
+      el('h1',{},'Application assistant'),
+      needsAccess?section('Connect this tab',paragraph('On a job page, click the MeshJob toolbar icon to give Chrome permission to scan this tab.')):
+        section(address?'Scan this page':'Open a job page',paragraph(state.issue||'Open a job listing or application in the active tab.')),
+      el('div',{class:'actions'},address?.protocol==='https:'&&button('Allow this site',task(grant),'primary'),
+        address?.protocol==='https:'&&button('Scan again',task(()=>scan())),
+        address?.protocol==='https:'&&button('Add manually',task(prepare)),button('Open Tracker',task(refreshDash)))
+    ];
+  const focus=document.activeElement;
+  const selector=workspace.contains(focus)&&focus.name?`[name="${CSS.escape(focus.name)}"]`:null;
+  workspace.replaceChildren(...[content].flat().filter(item=>item instanceof Node));
+  if(selector) workspace.querySelector(selector)?.focus({preventScroll:true});
 }
 render();
-void initialize().catch(error=>{state.initial=false;state.issue=error.message;render();});
-let scanTimer;
+void initialize().catch(error=>{state.loading=false;state.issue=error.message;render();}).finally(()=>{if(scanPending)scheduleScan();});
 function scheduleScan() {
-  clearTimeout(scanTimer);
-  scanTimer=setTimeout(()=>{if(!state.busy&&!document.querySelector('dialog[open]'))void scan({keepResult:true});},200);
+  scanPending=true;
+  if(scanQueued||autoScanning||!state.config)return;
+  scanQueued=true;
+  queueMicrotask(()=>{
+    scanQueued=false;
+    if(state.busy||document.querySelector('dialog[open]')) return;
+    scanPending=false;autoScanning=true;
+    void scan({keepResult:true}).finally(()=>{autoScanning=false;if(scanPending)scheduleScan();});
+  });
 }
-chrome.tabs.onActivated.addListener(scheduleScan);
-chrome.tabs.onUpdated.addListener((id,change)=>{
-  if(id===state.tab?.id&&change.status==='complete')scheduleScan();
+function pageTransition(id,url) {
+  const differentTab=activeTab!==id;
+  const differentJob=differentTab || url && !sameJob(lastPage,url);
+  if(state.busy&&!differentJob)return;
+  if(state.busy) {
+    state.cancelled=true;
+    void rpc('form:stop',{tabId:state.tab.id}).catch(()=>{});
+  }
+  activeTab=id;
+  ++state.revision;
+  watch(null);
+  if(differentJob) {clearJob();lastPage=null;window.scrollTo(0,0);}
+  for(const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+  state.result=null;state.maps=[];state.drafting=[];
+  state.inspection=null;state.loading=true;
+  render();
+}
+document.addEventListener('close',()=>{if(scanPending)scheduleScan();},true);
+chrome.tabs.onActivated.addListener(({tabId,windowId})=>{
+  if(windowId!==panelWindow)return;
+  pageTransition(tabId);
+  scheduleScan();
+});
+chrome.tabs.onUpdated.addListener((id,change,tab)=>{
+  if(tab.windowId!==panelWindow || !tab.active || id!==activeTab)return;
+  const changed=change.url && change.url!==lastPage;
+  if(change.status==='loading'||changed) pageTransition(id,change.url);
+  if(change.url||change.status==='complete') scheduleScan();
+});
+chrome.tabs.onReplaced.addListener((added,removed)=>{
+  if(removed===activeTab) {pageTransition(added);scheduleScan();}
+});
+chrome.permissions.onAdded.addListener(scheduleScan);
+chrome.permissions.onRemoved.addListener(scheduleScan);
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.type!=='panel:access'||sender.id!==chrome.runtime.id||
+    message.windowId!==panelWindow||message.tabId!==activeTab) return false;
+  scheduleScan();respond(true);
+  return false;
 });

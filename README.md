@@ -4,13 +4,13 @@ MeshJob is a local-first Chrome extension for discovering jobs, preparing applic
 
 ## Install
 
-1. Download [MeshJob 1.0.4 (ZIP)](install/MeshJob-1.0.4.zip) and extract it to a permanent folder. Keep this folder in place while using the extension.
+1. Download [MeshJob 1.0.5 (ZIP)](install/MeshJob-1.0.5.zip) and extract it to a permanent folder. Keep this folder in place while using the extension.
 2. In Chrome 120 or later, open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the extracted folder containing `manifest.json`.
 3. Pin MeshJob and click its toolbar icon. In **Discover**, choose **Set up discovery** or add a board in **Manage sources**. Grant the requested origins for the sources you choose.
 4. Add personal details, PDFs, and any verified answers in **Profile**. On an application tab, click the toolbar icon, prepare a draft, select your PDFs, and fill available fields. Review the employer’s page and submit it yourself.
 5. Use **Tracker** to follow stages and resolve actions. Use **Search status** in the Dashboard to pause, resume, or finish. Export a backup before uninstalling.
 
-The toolbar opens the Dashboard on general pages and the Side Panel on recognized job URLs. Chrome’s Side Panel picker also opens MeshJob on a generic HTTPS job page. You can enter a draft in Tracker when a form needs manual completion. Chrome manages registration credentials by default.
+The toolbar opens the Dashboard on general pages and the Side Panel on recognized job URLs. When open, the Side Panel follows the active tab and updates when the application form changes. If it shows **Connect this tab**, click the MeshJob toolbar icon to give it temporary access. Choose **Always scan this site** in the panel to enable automatic scans for future tabs on that site. Chrome manages registration credentials by default.
 
 ### Update an existing installation
 
@@ -46,7 +46,7 @@ npm test
 Load `dist/` as the unpacked extension. To generate a reproducible ZIP, use a clean output directory and set `MESHJOB_ZIP`. The ZIP has fixed entry timestamps.
 
 ```sh
-MESHJOB_DIST=./dist-release MESHJOB_ZIP=./MeshJob-1.0.4.zip npm run build
+MESHJOB_DIST=./dist-release MESHJOB_ZIP=./MeshJob-1.0.5.zip npm run build
 ```
 
 The end-to-end suite uses isolated Chromium profiles. It intercepts the employer hosts for all fill and submission fixtures. Set `MESHJOB_TEST_ROOT` to a writable scratch directory. Set `PLAYWRIGHT_BROWSERS_PATH` to a reusable browser cache if your environment has one.

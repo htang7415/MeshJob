@@ -8,6 +8,7 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
   const doc = document;
   let fields = new Map();
   let revision;
+  let formContext;
   let busy = false;
   let cancelled = false;
   let intent = false;
@@ -23,6 +24,12 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
     const style = getComputedStyle(node);
     return style.visibility!=='hidden' && style.display!=='none' && !!node.getClientRects().length;
   };
+  const visibleFields = () => [...doc.querySelectorAll(selector)].filter(node=>visible(node) ||
+    node.type==='file' && [...(node.labels??[])].some(visible));
+  function fieldId(node) {
+    if(!names.has(node)) names.set(node,'field-'+(++counter));
+    return names.get(node);
+  }
   const providerOf = () => {
     const host = location.hostname;
     if (/(^|\.)greenhouse\.io$/.test(host)) return 'greenhouse';
@@ -115,8 +122,7 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
     fields = new Map();
     const result = [];
     const grouped = new Set();
-    for (const node of doc.querySelectorAll(selector)) {
-      if (!visible(node) && !(node.type==='file' && [...(node.labels ?? [])].some(visible))) continue;
+    for (const node of visibleFields()) {
       const role = node.getAttribute('role');
       const type = skillPicker(node)?'skill-picker':['radio','checkbox','combobox'].includes(role)?role:
         node.tagName==='SELECT'?'select':node.tagName==='TEXTAREA'||node.isContentEditable?'textarea':node.type || 'text';
@@ -131,8 +137,7 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
         label = trim(region.querySelector(':scope > legend,:scope > label,[data-automation-id="formLabel"]')?.textContent ||
           region.getAttribute('aria-label') || (region.getAttribute('aria-labelledby') && doc.getElementById(region.getAttribute('aria-labelledby'))?.textContent) || node.name || label);
       }
-      if (!names.has(node)) names.set(node,'field-'+(++counter));
-      const id = names.get(node);
+      const id = fieldId(node);
       const name = node.name || node.getAttribute('data-automation-id') || node.id;
       const phrase = label+' '+name+' '+(type==='checkbox' ? trim(node.parentElement?.textContent).slice(0,250) : '');
       const row = {
@@ -415,12 +420,58 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
   const observer = new MutationObserver(afterChange);
   observer.observe(doc.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['data-automation-id','data-testid','aria-hidden']});
   afterChange();
+
+  const views=new Set();
+  let viewTimer, lastView;
+  function viewStamp() {
+    const heading=first('[data-automation-id="jobPostingHeader"]','main h1','h1','h2');
+    const controls=visibleFields().slice(0,200).map(node=>[fieldId(node),nativeLabel(node),node.required,
+      node.matches(':disabled,[aria-disabled=true],[readonly]'),node.checked,node.getAttribute('aria-checked'),
+      node.value?true:!!node.files?.length,node.isContentEditable&&!!trim(node.textContent)]);
+    return JSON.stringify([expectedUrl(),doc.title,trim(heading?.textContent),getStep(),blockers(),receipt(),
+      !!first('script[type="application/ld+json"],[data-automation-id="jobPostingDescription"]'),controls]);
+  }
+  function scheduleView() {
+    if(!views.size||viewTimer) return;
+    viewTimer=setTimeout(()=>{
+      viewTimer=null;
+      if(!views.size) return;
+      const next=viewStamp();
+      if(next===lastView) return;
+      lastView=next;
+      for(const port of views) port.postMessage({type:'page:changed'});
+    },90);
+  }
+  const viewObserver=new MutationObserver(scheduleView);
+  chrome.runtime.onConnect.addListener(port=>{
+    if(port.name!=='meshjob:watch' || port.sender?.id!==chrome.runtime.id ||
+      port.sender?.url?.split(/[?#]/,1)[0]!==chrome.runtime.getURL('panel.html')) return;
+    views.add(port);
+    viewObserver.observe(doc.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,
+      attributeFilter:['class','style','hidden','inert','aria-hidden','aria-required','aria-disabled','aria-label','aria-checked',
+        'required','disabled','readonly','data-automation-id','data-testid','value']});
+    scheduleView();
+    port.onDisconnect.addListener(()=>{
+      views.delete(port);
+      if(!views.size) viewObserver.disconnect();
+    });
+  });
+  doc.addEventListener('input',scheduleView,true);
+  doc.addEventListener('change',scheduleView,true);
+  win.addEventListener('pageshow',scheduleView);
+  win.addEventListener('popstate',scheduleView);
+  win.addEventListener('hashchange',scheduleView);
+  win.navigation?.addEventListener('currententrychange',scheduleView);
   chrome.runtime.onMessage.addListener((message,sender,respond)=>{
     if (sender.id!==chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('')) || !message?.type?.startsWith('form:')) return false;
     const handle = async ()=>{
       if (message.type==='form:inspect') {
-        revision=crypto.randomUUID();
-        return {job:readJob(),page:expectedUrl(),revision,fields:scan(),step:getStep(),...blockers(),intent,receipt:receipt()};
+        const rows=scan();
+        const page=expectedUrl(), step=getStep();
+        const context=JSON.stringify([page,step,rows.map(row=>[row.id,row.label,row.type,row.required,row.disabled,row.critical,row.consent])]);
+        if(context!==formContext) {formContext=context;revision=crypto.randomUUID();}
+        if(message.watch) lastView=viewStamp();
+        return {job:readJob(),page,revision,fields:rows,step,...blockers(),intent,receipt:receipt()};
       }
       if (message.type==='form:fill') return fill(message);
       if (message.type==='form:advance') return advance(message);
