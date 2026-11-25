@@ -7,6 +7,8 @@ import { zipSync } from 'fflate';
 const root=new URL('../',import.meta.url);
 const path=name=>new URL(name,root);
 const {version}=JSON.parse(await readFile(path('package.json'),'utf8'));
+const key=process.env.MESHJOB_EXTENSION_PUBLIC_KEY || (await readFile(path('scripts/extension-public-key.txt'),'utf8')).trim();
+if(!/^[A-Za-z0-9+/]+=*$/.test(key)) throw new Error('Provide a base64 extension public key.');
 const out=resolve(process.env.MESHJOB_DIST||fileURLToPath(path('dist')));
 await mkdir(out,{recursive:true});
 await cp(path('assets'),out,{recursive:true});
@@ -28,7 +30,7 @@ const notices=await Promise.all(licensePackages.map(async name=>{
 }));
 await writeFile(resolve(out,'THIRD_PARTY_NOTICES.txt'),notices.join('\n\n'+('-'.repeat(72))+'\n\n')+'\n');
 const manifest={
-  manifest_version:3,name:'MeshJob',version,description:'Find jobs early, fill applications accurately, and track your search locally.',
+  manifest_version:3,name:'MeshJob',version,key,description:'Find jobs early, fill applications accurately, and track your search locally.',
   minimum_chrome_version:'120',permissions:['activeTab','scripting','storage','alarms','notifications','sidePanel'],
   optional_permissions:['identity'],optional_host_permissions:['https://*/*'],
   action:{default_title:'Open MeshJob',default_icon:{16:'icons/icon16.png',32:'icons/icon32.png'}},
@@ -40,10 +42,6 @@ if(process.env.MESHJOB_OAUTH_CLIENT_ID) {
   const id=process.env.MESHJOB_OAUTH_CLIENT_ID;
   if(!/^[\w-]+\.apps\.googleusercontent\.com$/.test(id)) throw new Error('Provide a Google Chrome Extension OAuth client ID.');
   manifest.oauth2={client_id:id,scopes:['https://www.googleapis.com/auth/gmail.readonly']};
-}
-if(process.env.MESHJOB_EXTENSION_PUBLIC_KEY) {
-  if(!/^[A-Za-z0-9+/]+=*$/.test(process.env.MESHJOB_EXTENSION_PUBLIC_KEY)) throw new Error('Provide a base64 extension public key.');
-  manifest.key=process.env.MESHJOB_EXTENSION_PUBLIC_KEY;
 }
 await writeFile(resolve(out,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
 if(process.env.MESHJOB_ZIP) {

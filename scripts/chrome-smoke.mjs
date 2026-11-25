@@ -1,5 +1,5 @@
 import { openChrome } from './chrome-cdp.mjs';
-import { mkdtemp,mkdir } from 'node:fs/promises';
+import { cp,mkdtemp,mkdir,readFile,writeFile } from 'node:fs/promises';
 import { join,resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import assert from 'node:assert/strict';
@@ -112,6 +112,32 @@ try {
   await heading('Profile');
   results.finishedAfterReload=await until("document.querySelector('.mode')?.textContent.includes('Search finished')");
   assert.deepEqual(await expr('chrome.alarms.getAll()'),[]);
+  const otherFolder=await mkdtemp(join(scratch,'release-update-'));
+  await cp(extension,otherFolder,{recursive:true});
+  const manifestPath=join(otherFolder,'manifest.json');
+  const manifest=JSON.parse(await readFile(manifestPath,'utf8'));
+  assert.ok(manifest.key);
+  const parts=manifest.version.split('.').map(Number);
+  parts[parts.length-1]++;
+  manifest.version=parts.join('.');
+  await writeFile(manifestPath,JSON.stringify(manifest));
+  const update=await send('Extensions.loadUnpacked',{path:otherFolder});
+  assert.equal(update.id,id);
+  const {extensions}=await send('Extensions.getExtensions');
+  assert.equal(extensions.filter(candidate=>candidate.name==='MeshJob').length,1);
+  results.extensionId=id;
+  results.oneInstallAfterFolderChange=true;
+  const restored=await send('Target.createTarget',{url:'chrome-extension://'+id+'/dashboard.html#tracker'});
+  const restoredSession=await send('Target.attachToTarget',{targetId:restored.targetId,flatten:true});
+  for(let attempt=0;attempt<100;attempt++) {
+    const inspection=await send('Runtime.evaluate',{
+      expression:"document.body?.innerText.includes('Clinical Coordinator')===true && chrome.runtime.getManifest().version",
+      returnByValue:true
+    },restoredSession.sessionId);
+    if(inspection.result.value===manifest.version) {results.recordsRetainedOnUpdate=true;break;}
+    await wait(250);
+  }
+  assert.equal(results.recordsRetainedOnUpdate,true);
 } catch(error) {
   results.error=error.message;
   process.exitCode=1;

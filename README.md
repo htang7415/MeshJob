@@ -4,13 +4,25 @@ MeshJob is a local-first Chrome extension for discovering jobs, preparing applic
 
 ## Install
 
-1. Download [MeshJob 1.0.2 (ZIP)](install/MeshJob-1.0.2.zip) and extract it to a permanent folder. Keep this folder in place while using the extension.
+1. Download [MeshJob 1.0.3 (ZIP)](install/MeshJob-1.0.3.zip) and extract it to a permanent folder. Keep this folder in place while using the extension.
 2. In Chrome 120 or later, open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the extracted folder containing `manifest.json`.
 3. Pin MeshJob and click its toolbar icon. In **Discover**, choose **Set up discovery** or add a board in **Manage sources**. Grant the requested origins for the sources you choose.
 4. Add personal details, PDFs, and any verified answers in **Profile**. On an application tab, click the toolbar icon, prepare a draft, select your PDFs, and fill available fields. Review the employer’s page and submit it yourself.
 5. Use **Tracker** to follow stages and resolve actions. Use **Search status** in the Dashboard to pause, resume, or finish. Export a backup before uninstalling.
 
 The toolbar opens the Dashboard on general pages and the Side Panel on recognized job URLs. Chrome’s Side Panel picker also opens MeshJob on a generic HTTPS job page. You can enter a draft in Tracker when a form needs manual completion. Chrome manages registration credentials by default.
+
+### Update an existing installation
+
+For 1.0.3 and later, extract each new release over the files in your existing MeshJob folder. In `chrome://extensions`, click **Reload** on the installed MeshJob card. The official builds share a fixed extension ID.
+
+Versions through 1.0.2 used directory-based IDs. Chrome treats copies loaded from different folders as separate extensions, each with its own local records. To switch to the fixed ID:
+
+1. Open each old copy that contains data and choose **Profile → Local data → Download backup ZIP**. Save the files separately. You can turn off the old copies in `chrome://extensions` after exporting.
+2. Extract and load 1.0.3 in a permanent folder. In the new copy, choose **Profile → Local data → Import backup ZIP** and preview the backup from the old copy whose profile and preferences you want to keep. In a fresh installation, use **Replace all local records** to restore that backup.
+3. If the other copy has records you want, import its backup using **Merge new records into this profile**. Verify the Tracker, Profile, and documents in the new copy before removing the old cards.
+
+Restored sources start disabled. Re-enable the sources you want and reconnect optional integrations in the new copy. [Chrome extension IDs](https://developer.chrome.com/docs/extensions/reference/manifest/key)
 
 ### Autofill on Workday
 
@@ -32,7 +44,7 @@ npm test
 Load `dist/` as the unpacked extension. To generate a reproducible ZIP, use a clean output directory and set `MESHJOB_ZIP`. The ZIP has fixed entry timestamps.
 
 ```sh
-MESHJOB_DIST=./dist-release MESHJOB_ZIP=./MeshJob-1.0.2.zip npm run build
+MESHJOB_DIST=./dist-release MESHJOB_ZIP=./MeshJob-1.0.3.zip npm run build
 ```
 
 The end-to-end suite uses isolated Chromium profiles. It intercepts the employer hosts for all fill and submission fixtures. Set `MESHJOB_TEST_ROOT` to a writable scratch directory. Set `PLAYWRIGHT_BROWSERS_PATH` to a reusable browser cache if your environment has one.
@@ -64,9 +76,9 @@ In Profile, set a personal API key. Claude can look for jobs on the web, score e
 
 The standard build has no OAuth client. For your own Gmail-enabled build:
 
-1. Load the extension and note its ID in `chrome://extensions`. Keep the unpacked directory in the same location. For an ID that stays the same across locations, use the public extension key documented by Chrome and provide it as `MESHJOB_EXTENSION_PUBLIC_KEY`. Use the public key only.
+1. Load the extension and note its ID in `chrome://extensions`. The default build uses MeshJob’s published public key. Set `MESHJOB_EXTENSION_PUBLIC_KEY` only when you need a separate development or OAuth identity. Use the public key only.
 2. In your Google Cloud project, enable the Gmail API and configure the OAuth consent screen. If the project is in testing, add your Google account as a test user.
-3. Create a **Chrome Extension** OAuth client with the exact extension ID. Build with `MESHJOB_OAUTH_CLIENT_ID=your-id.apps.googleusercontent.com npm run build`, or set both build variables for a stable keyed ID. Reload the same extension and confirm the ID matches the OAuth client.
+3. Create a **Chrome Extension** OAuth client with the exact extension ID. Build with `MESHJOB_OAUTH_CLIENT_ID=your-id.apps.googleusercontent.com npm run build`, and also set `MESHJOB_EXTENSION_PUBLIC_KEY` if you chose a separate identity. Reload the same extension and confirm the ID matches the OAuth client.
 4. In **Profile → Integrations**, choose **Connect read-only** and grant consent. Use **Sync now** and inspect the last-sync status. Routine mark-read is an optional upgrade. Chrome Identity handles the redirect for this client type.
 
 The restricted Gmail scopes can require Google verification for distribution. Chrome’s account used for authorization should match the Gmail account you open when following mail links. [Chrome OAuth guide](https://developer.chrome.com/docs/extensions/how-to/integrate/oauth), [Stable extension IDs](https://developer.chrome.com/docs/extensions/reference/manifest/key), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)
