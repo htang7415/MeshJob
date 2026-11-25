@@ -1,0 +1,32 @@
+{
+  "roles": {
+    "n": 120,
+    "groups": 12,
+    "recall": [
+      72,
+      72
+    ],
+    "initialPrecision": [
+      72,
+      87
+    ],
+    "misses": []
+  },
+  "emails": {
+    "n": 108,
+    "classification": [
+      96,
+      96
+    ],
+    "urgentRecall": [
+      60,
+      60
+    ],
+    "urgentPrecision": [
+      60,
+      60
+    ],
+    "missedUrgent": [],
+    "categoryDifferences": []
+  }
+}

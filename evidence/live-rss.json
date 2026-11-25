@@ -1,0 +1,16 @@
+[
+  {
+    "url": "https://weworkremotely.com/remote-jobs.rss",
+    "permission": "https://weworkremotely.com/remote-job-rss-feed",
+    "at": "2026-11-25T20:51:01.092Z",
+    "count": 97,
+    "verifiedPostingTimes": 0,
+    "attributedLinks": 97
+  },
+  {
+    "url": "https://remotive.com/feed",
+    "permission": "https://remotive.com/remote-jobs/rss-feed",
+    "at": "2026-11-25T20:51:02.180Z",
+    "error": "Source returned HTTP 404"
+  }
+]

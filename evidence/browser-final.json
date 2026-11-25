@@ -1,0 +1,864 @@
+{
+  "forms": [
+    {
+      "provider": "greenhouse",
+      "variant": 0,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2,
+      "flowMs": 281.79570800000056,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 1,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7000000476837158,
+      "flowMs": 211.88154200000008,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 2,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.8000000715255737,
+      "flowMs": 43.86266700000033,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 3,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.6999999284744263,
+      "flowMs": 40.63533300000017,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 4,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.3000000715255737,
+      "flowMs": 42.330167000000074,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 5,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7999999523162842,
+      "flowMs": 72.6392079999996,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 6,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.5999999046325684,
+      "flowMs": 38.173125000000255,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 7,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.6999999284744263,
+      "flowMs": 57.89391699999942,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 8,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 3.3000000715255737,
+      "flowMs": 171.3911250000001,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 9,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7999999523162842,
+      "flowMs": 42.90108400000008,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 10,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.8000000715255737,
+      "flowMs": 42.03200000000015,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 11,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.899999976158142,
+      "flowMs": 54.39991599999939,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 12,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.6999999284744263,
+      "flowMs": 39.23999999999978,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 13,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.6999999284744263,
+      "flowMs": 53.270166999999674,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 14,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.6999999284744263,
+      "flowMs": 38.20612500000061,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 15,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.100000023841858,
+      "flowMs": 49.670749999999316,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 16,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.899999976158142,
+      "flowMs": 55.7281669999993,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 17,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2,
+      "flowMs": 46.51487500000076,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 18,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.200000047683716,
+      "flowMs": 428.53983399999925,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "greenhouse",
+      "variant": 19,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.0999999046325684,
+      "flowMs": 217.08737499999916,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 0,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2,
+      "flowMs": 143.99904199999946,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 1,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.8000000715255737,
+      "flowMs": 132.59787499999948,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 2,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.100000023841858,
+      "flowMs": 105.93429199999991,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 3,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.8000000715255737,
+      "flowMs": 181.03941699999996,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 4,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.600000023841858,
+      "flowMs": 36.08208399999967,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 5,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.899999976158142,
+      "flowMs": 121.8504580000008,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 6,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 4.600000023841858,
+      "flowMs": 654.2139999999999,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 7,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.100000023841858,
+      "flowMs": 84.37287500000093,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 8,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.8000000715255737,
+      "flowMs": 72.78158299999996,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 9,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.6999999284744263,
+      "flowMs": 58.89879100000144,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 10,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 3.4000000953674316,
+      "flowMs": 132.95616599999994,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 11,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.600000023841858,
+      "flowMs": 35.27062500000102,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 12,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.8000000715255737,
+      "flowMs": 79.06075000000055,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 13,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7000000476837158,
+      "flowMs": 54.58024999999907,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 14,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7999999523162842,
+      "flowMs": 57.856166999999914,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 15,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.299999952316284,
+      "flowMs": 40.31616699999904,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 16,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.899999976158142,
+      "flowMs": 44.18695800000023,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 17,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.200000047683716,
+      "flowMs": 90.56999999999971,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 18,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.899999976158142,
+      "flowMs": 78.73220899999978,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "ashby",
+      "variant": 19,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2,
+      "flowMs": 57.55545799999891,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 0,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.5999999046325684,
+      "flowMs": 75.44883300000038,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 1,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7000000476837158,
+      "flowMs": 39.37804200000028,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 2,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.5,
+      "flowMs": 188.1560840000002,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 3,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7000000476837158,
+      "flowMs": 33.56554200000028,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 4,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7000000476837158,
+      "flowMs": 41.082540999999765,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 5,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.600000023841858,
+      "flowMs": 110.93716700000004,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 6,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.100000023841858,
+      "flowMs": 66.68499999999949,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 7,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.600000023841858,
+      "flowMs": 34.03033399999913,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 8,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.5,
+      "flowMs": 22.558124999999563,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 9,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.600000023841858,
+      "flowMs": 38.66399999999885,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 10,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7999999523162842,
+      "flowMs": 70.86124999999993,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 11,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2,
+      "flowMs": 364.8875000000007,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 12,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.8000000715255737,
+      "flowMs": 185.1466249999994,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 13,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.8000000715255737,
+      "flowMs": 48.23354100000142,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 14,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.6999999284744263,
+      "flowMs": 46.303499999999985,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 15,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.600000023841858,
+      "flowMs": 114.74516599999879,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 16,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.5,
+      "flowMs": 82.76266700000087,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 17,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2,
+      "flowMs": 40.072541999999885,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 18,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2,
+      "flowMs": 75.29058299999997,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "lever",
+      "variant": 19,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.700000047683716,
+      "flowMs": 88.27154200000041,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 0,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7000000476837158,
+      "flowMs": 121.54983299999913,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 1,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.6999999284744263,
+      "flowMs": 40.01737499999945,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 2,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7000000476837158,
+      "flowMs": 47.45970800000032,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 3,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.8000000715255737,
+      "flowMs": 43.229833999999755,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 4,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7000000476837158,
+      "flowMs": 45.12604199999987,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 5,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.899999976158142,
+      "flowMs": 43.04008299999987,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 6,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.6999999284744263,
+      "flowMs": 40.452792000001864,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 7,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 3.299999952316284,
+      "flowMs": 261.56404199999815,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 8,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.5,
+      "flowMs": 61.601291999999376,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 9,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7999999523162842,
+      "flowMs": 256.4175830000022,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 10,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.8000000715255737,
+      "flowMs": 1290.8888329999972,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 11,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.899999976158142,
+      "flowMs": 74.73824999999852,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 12,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.899999976158142,
+      "flowMs": 143.2893750000003,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 13,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.1999999284744263,
+      "flowMs": 548.2333330000001,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 14,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.7999999523162842,
+      "flowMs": 47.33408299999792,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 15,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.200000047683716,
+      "flowMs": 69.36900000000242,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 16,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.399999976158142,
+      "flowMs": 1073.8911659999976,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 17,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 2.5,
+      "flowMs": 51.960541000000376,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 18,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.899999976158142,
+      "flowMs": 49.59220899999855,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    },
+    {
+      "provider": "workday",
+      "variant": 19,
+      "standardCorrect": 7,
+      "standardTotal": 7,
+      "duration": 1.899999976158142,
+      "flowMs": 44.23695899999802,
+      "criticalCorrect": 3,
+      "criticalTotal": 3
+    }
+  ],
+  "workday": [
+    "My Experience",
+    "Application Questions",
+    "Review"
+  ],
+  "warm": [
+    31.5,
+    25.299999952316284,
+    45.60000002384186,
+    38.200000047683716,
+    31.399999976158142,
+    32.10000002384186,
+    42.699999928474426,
+    49.199999928474426,
+    57.10000002384186,
+    41.799999952316284,
+    28.699999928474426,
+    24.899999976158142,
+    29,
+    32.40000009536743,
+    21.600000023841858,
+    22.200000047683716,
+    40.700000047683716,
+    27.799999952316284,
+    28.200000047683716,
+    22.699999928474426
+  ],
+  "cold": [
+    99.59999990463257,
+    186.79999995231628,
+    271.60000002384186,
+    141.20000004768372,
+    58,
+    120.29999995231628
+  ],
+  "sandboxRequests": 84,
+  "externalApplicationRequests": 0,
+  "guidedReachedReview": true,
+  "environment": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/158.0.0.0 Safari/537.36",
+  "warmSummary": {
+    "n": 20,
+    "p50": 31.399999976158142,
+    "p95": 49.199999928474426
+  },
+  "coldSummary": {
+    "n": 6,
+    "p50": 120.29999995231628,
+    "p95": 271.60000002384186
+  },
+  "fillSummary": {
+    "n": 80,
+    "p50": 1.8000000715255737,
+    "p95": 2.700000047683716
+  },
+  "flowSummary": {
+    "n": 80,
+    "p50": 57.89391699999942,
+    "p95": 428.53983399999925
+  },
+  "pageErrors": []
+}

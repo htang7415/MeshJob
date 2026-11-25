@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-release/
+*.zip
+!/install/MeshJob-*.zip
+.env*
+.DS_Store

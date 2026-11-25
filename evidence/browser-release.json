@@ -1,0 +1,13 @@
+{
+  "observedAt": "2026-11-25T21:14:31.685Z",
+  "kind": "fresh installed Chrome smoke",
+  "chrome": "Chrome/158.0.8127.37",
+  "loadedRelease": true,
+  "withoutHostGrants": true,
+  "withoutCredentials": true,
+  "pdfLocalExtraction": true,
+  "offlineCSV": true,
+  "offlineZIP": true,
+  "backupPreview": true,
+  "finishedAfterReload": true
+}

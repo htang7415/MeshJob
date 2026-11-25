@@ -1,0 +1,177 @@
+{
+  "roles": {
+    "n": 120,
+    "groups": 12,
+    "recall": [
+      64,
+      72
+    ],
+    "initialPrecision": [
+      64,
+      79
+    ],
+    "misses": [
+      {
+        "target": "Software engineer",
+        "title": "Applications Programmer",
+        "expected": true,
+        "actual": false
+      },
+      {
+        "target": "AI Infra",
+        "title": "Model Serving Developer",
+        "expected": true,
+        "actual": false
+      },
+      {
+        "target": "Customer support",
+        "title": "Member Services Advisor",
+        "expected": true,
+        "actual": false
+      },
+      {
+        "target": "Customer support",
+        "title": "Client Care Representative",
+        "expected": true,
+        "actual": false
+      },
+      {
+        "target": "Speech-language pathologist",
+        "title": "Communication Disorders Clinician",
+        "expected": true,
+        "actual": false
+      },
+      {
+        "target": "Landscape architect",
+        "title": "Public Realm Designer",
+        "expected": true,
+        "actual": false
+      },
+      {
+        "target": "Landscape architect",
+        "title": "Site Planning Associate",
+        "expected": true,
+        "actual": false
+      },
+      {
+        "target": "Landscape architect",
+        "title": "Park Design Coordinator",
+        "expected": true,
+        "actual": false
+      }
+    ]
+  },
+  "emails": {
+    "n": 108,
+    "classification": [
+      80,
+      96
+    ],
+    "urgentRecall": [
+      46,
+      60
+    ],
+    "urgentPrecision": [
+      46,
+      47
+    ],
+    "missedUrgent": [
+      "Invitation · coding exercise",
+      "Technical screen",
+      "Meet the team",
+      "Need details on your profile",
+      "Candidate checklist",
+      "The role is yours",
+      "Join our staff",
+      "Candidate profile",
+      "Our recruiting process",
+      "Application office",
+      "From the people team",
+      "Next step from the coordinator",
+      "Applicant kit",
+      "Scheduling desk"
+    ],
+    "categoryDifferences": [
+      {
+        "subject": "Candidate reference AB-113",
+        "expected": "confirmation",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Candidate information",
+        "expected": "confirmation",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Application receipt",
+        "expected": "confirmation",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Your interview outcome",
+        "expected": "rejection",
+        "actual": "unknown"
+      },
+      {
+        "subject": "A decision on the teaching role",
+        "expected": "rejection",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Review in progress",
+        "expected": "update",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Your file is complete",
+        "expected": "update",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Invitation · coding exercise",
+        "expected": "assessment",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Technical screen",
+        "expected": "assessment",
+        "actual": "unknown"
+      },
+      {
+        "subject": "An invitation to interview",
+        "expected": "interview",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Interview slots",
+        "expected": "interview",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Meet the team",
+        "expected": "interview",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Need details on your profile",
+        "expected": "follow-up",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Candidate checklist",
+        "expected": "follow-up",
+        "actual": "unknown"
+      },
+      {
+        "subject": "The role is yours",
+        "expected": "offer",
+        "actual": "unknown"
+      },
+      {
+        "subject": "Join our staff",
+        "expected": "offer",
+        "actual": "unknown"
+      }
+    ]
+  }
+}

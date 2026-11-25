@@ -1,0 +1,52 @@
+{
+  "observedAt": "2026-11-25T21:13:26.094Z",
+  "mode": "read only",
+  "formsScanned": 2,
+  "pagesAttempted": 2,
+  "blockedWrites": 3,
+  "ashbyReadQueries": 2,
+  "ashbyOperations": [
+    "ApiJobPosting",
+    "ApiOrganizationFromHostedJobsPageName",
+    "ApiAutocompleteGeoLocation"
+  ],
+  "blockedWriteEndpoints": [
+    "https://jobs.ashbyhq.com/api/non-user-graphql"
+  ],
+  "userDataEntered": 0,
+  "submissions": 0,
+  "results": [
+    {
+      "provider": "ashby",
+      "board": "Linear",
+      "url": "https://jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff/application",
+      "observedAt": "2026-11-25T21:13:19.690Z",
+      "http": 200,
+      "finalUrl": "https://jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff/application",
+      "scanner": "ashby",
+      "titleFound": true,
+      "fields": 14,
+      "required": 10,
+      "standardControls": 10,
+      "challenge": false,
+      "login": false,
+      "registration": false
+    },
+    {
+      "provider": "ashby",
+      "board": "Ramp",
+      "url": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245/application",
+      "observedAt": "2026-11-25T21:13:24.649Z",
+      "http": 200,
+      "finalUrl": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245/application",
+      "scanner": "ashby",
+      "titleFound": true,
+      "fields": 14,
+      "required": 8,
+      "standardControls": 8,
+      "challenge": false,
+      "login": false,
+      "registration": false
+    }
+  ]
+}
