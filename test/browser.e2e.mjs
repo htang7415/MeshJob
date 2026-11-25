@@ -199,7 +199,8 @@ test('fresh production build runs without host grants, credentials or external a
   try {
     const manifest=await dashboard.evaluate(()=>chrome.runtime.getManifest());
     const permissions=await dashboard.evaluate(()=>chrome.permissions.getAll());
-    assert.equal(manifest.version,'1.0.0');assert.equal(manifest.oauth2,undefined);
+    const {version}=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));
+    assert.equal(manifest.version,version);assert.equal(manifest.oauth2,undefined);
     assert.ok((permissions.origins??[]).every(origin=>origin.startsWith('chrome-extension://')),JSON.stringify(permissions));
     await dashboard.getByRole('button',{name:'Skip setup'}).click();
     await dashboard.getByRole('link',{name:'Tracker',exact:true}).click();

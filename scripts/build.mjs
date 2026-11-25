@@ -6,6 +6,7 @@ import { zipSync } from 'fflate';
 
 const root=new URL('../',import.meta.url);
 const path=name=>new URL(name,root);
+const {version}=JSON.parse(await readFile(path('package.json'),'utf8'));
 const out=resolve(process.env.MESHJOB_DIST||fileURLToPath(path('dist')));
 await mkdir(out,{recursive:true});
 await cp(path('assets'),out,{recursive:true});
@@ -27,7 +28,7 @@ const notices=await Promise.all(licensePackages.map(async name=>{
 }));
 await writeFile(resolve(out,'THIRD_PARTY_NOTICES.txt'),notices.join('\n\n'+('-'.repeat(72))+'\n\n')+'\n');
 const manifest={
-  manifest_version:3,name:'MeshJob',version:'1.0.0',description:'Find jobs early, fill applications accurately, and track your search locally.',
+  manifest_version:3,name:'MeshJob',version,description:'Find jobs early, fill applications accurately, and track your search locally.',
   minimum_chrome_version:'120',permissions:['activeTab','scripting','storage','alarms','notifications','sidePanel'],
   optional_permissions:['identity'],optional_host_permissions:['https://*/*'],
   action:{default_title:'Open MeshJob',default_icon:{16:'icons/icon16.png',32:'icons/icon32.png'}},
