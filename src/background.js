@@ -277,23 +277,20 @@ const handlers={
     return {claude:!!local.claudeKey,registrationEmail:local.registrationEmail??'',gmailConfigured:!!chrome.runtime.getManifest().oauth2,
       atsAccess:await chrome.permissions.contains({origins:ATS_ORIGINS})};
   },
-  'gmail:connect':async message=>{
-    await getMailToken({interactive:true,modify:!!message.modify});
+  'gmail:connect':async ()=>{
+    await getMailToken({interactive:true});
     const previous=await settings();
     if(!previous.gmail) await db.runtime.delete('gmail-cursor');
-    await updateSettings({gmail:true,markRead:!!message.modify});
+    await updateSettings({gmail:true,markRead:false});
     void tick().catch(()=>{});
     return true;
-  },
-  'gmail:readonly':async ()=>{
-    stopMail();await updateSettings({markRead:false});return true;
   },
   'gmail:disconnect':async message=>{
     stopMail();
     const previous=await settings();
     try { await disconnectMail(!!message.revoke); }
     finally {
-      await updateSettings({gmail:false,markRead:false});
+      await updateSettings({gmail:false});
       await db.transaction('rw',db.runtime,db.events,async()=>{
         await db.runtime.bulkDelete(['gmail-cursor','health:gmail']);
         await db.events.filter(event=>event.pendingRead).modify({pendingRead:false});

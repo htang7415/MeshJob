@@ -290,7 +290,7 @@ export async function runMail({generation,op}={}) {
   const run = cancellationSignal(op,generation,'gmail');
   const config = await settings();
   try {
-    const ai = config.mailAI ? await claudeFor(config,generation,run.signal) : null;
+    const ai = await claudeFor(config,generation,run.signal);
     return await syncMail({config,generation,signal:run.signal,notify:notifyUrgent,ai});
   } finally { run.done(); }
 }
@@ -368,7 +368,7 @@ export async function tick() {
     const today = localSlot(new Date(),config.slots);
     const mail = config.gmail && (!mailHealth?.nextAt || mailHealth.nextAt<=now) ?
       serviceAttempt('health:gmail',()=>runMail({generation}),generation,300_000) : null;
-    const search = config.preferences.titles.length && today.key && await claimSlot(today.key,generation) ?
+    const search = config.dailySearch && config.preferences.titles.length && today.key && await claimSlot(today.key,generation) ?
       serviceAttempt('health:search',async()=>{
         if (!await claudeFor(config,generation)) return {skipped:'Claude is disabled'};
         return searchNow({generation});

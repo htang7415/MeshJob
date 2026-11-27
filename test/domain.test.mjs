@@ -27,10 +27,11 @@ test('freshness requires original posting evidence and keeps observation bounds 
 });
 test('wall clock slots have stable date keys and narrow non-replay windows',()=>{
   const at=(day,h,m)=>new Date(2026,10,day,h,m,0);
-  assert.equal(localSlot(at(1,18,30),DEFAULTS.slots).key,'slot:2026-11-01:18:30');
-  assert.equal(localSlot(at(1,18,31),DEFAULTS.slots).key,'slot:2026-11-01:18:30');
-  assert.equal(localSlot(at(1,18,42),DEFAULTS.slots).key,undefined);
-  assert.equal(localSlot(at(2,8,30),DEFAULTS.slots).key,'slot:2026-11-02:08:30');
+  assert.deepEqual(DEFAULTS.slots,['09:00']);
+  assert.equal(localSlot(at(1,9,0),DEFAULTS.slots).key,'slot:2026-11-01:09:00');
+  assert.equal(localSlot(at(1,9,1),DEFAULTS.slots).key,'slot:2026-11-01:09:00');
+  assert.equal(localSlot(at(1,9,12),DEFAULTS.slots).key,undefined);
+  assert.equal(localSlot(at(1,18,30),['08:30','18:30']).key,'slot:2026-11-01:18:30');
 });
 test('visa evidence keeps unknowns and ignores unsupported history exclusions',()=>{
   const policy={sponsorship:'Required'};

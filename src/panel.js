@@ -122,7 +122,7 @@ async function initialize() {
 function mode() {
   if(state.loading) return 'loading';
   const found=state.inspection;
-  if(!found) return httpUrl(state.tab?.url)?.protocol==='https:'&&state.issue?'access':'home';
+  if(!found) return httpUrl(state.tab?.url)?.protocol==='https:'&&state.issue||state.tab?.id!=null&&!state.tab.url?'access':'home';
   if(found.fields.length||found.embedded||found.registration) return 'form';
   if(found.job.title&&(postingIdentity(found.page)||found.job.jd)) return 'posting';
   return 'home';
@@ -305,6 +305,8 @@ function homeView() {
   return [...sections,!sections.length&&paragraph('Open a job page. MeshJob fills the application and tracks it here.','empty-line')];
 }
 function accessView() {
+  // Without host access Chrome hides the URL; clicking the toolbar icon grants this tab temporarily.
+  if(!state.tab?.url) return [el('section',{class:'group'},paragraph('Click the MeshJob toolbar icon to read this page.','empty-line')),...homeView().filter(node=>node.tagName==='SECTION')];
   return [el('section',{class:'group'},paragraph('MeshJob needs access to read this page.','empty-line'),
     button('Allow on this site',task(async()=>{
       const current=httpUrl(state.tab?.url);
@@ -315,7 +317,8 @@ function postingView() {
   const app=state.app??state.related;
   return [jobCard(app),
     app?el('div',{class:'actions'},button('Open in Full view',task(()=>fullView('#tracker/'+app.id)),'wide')):
-      button('Save to Tracker',task(async()=>{await ensureApp('Saved');render();toast('Saved to Tracker.');}),'primary wide')];
+      button('Save to Tracker',task(async()=>{await ensureApp('Saved');render();toast('Saved to Tracker.');}),'primary wide'),
+    submissionView(),learnView()];
 }
 function submissionView() {
   const app=state.app;
@@ -354,10 +357,10 @@ function formView() {
     registration&&notice('Create an account','Create the account yourself. MeshJob can fill your email.'),
     jobCard(state.app),
     el('section',{class:'group'},
-      el('p',{class:'progress','aria-live':'polite'},fields.length?fields.length+' fields · '+open.length+' required to fill':'Waiting for the form…'),
+      el('p',{class:'progress','aria-live':'polite'},[found.job.provider==='workday'&&found.step,fields.length?fields.length+' fields · '+open.length+' required to fill':'Waiting for the form…'].filter(Boolean).join(' · ')),
       needsEmbed?button('Allow Greenhouse form',task(async()=>{await permit([embedded.origin+'/*'],['webNavigation']);await scan();}),'primary wide'):
         state.busy?el('div',{class:'actions'},el('span',{class:'subtle',role:'status'},'Filling…'),button('Stop',task(stopFill),'small')):
-          button(state.app&&found.step?'Fill this page':'Autofill',task(()=>busyWith(fillPage)),'primary wide',{disabled:!fields.length||challenge||login||!!receipt}),
+          button(state.app&&found.job.provider==='workday'&&found.step?'Fill this page':'Autofill',task(()=>busyWith(fillPage)),'primary wide',{disabled:!fields.length||challenge||login||!!receipt}),
       registration&&button('Fill registration email',task(async()=>{
         await ensureApp();
         const r=await rpc('form:registration',pageRef());toast(r.count?'Email filled.':'No empty email field.');

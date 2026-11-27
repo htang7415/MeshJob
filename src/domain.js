@@ -2,7 +2,7 @@ import regions from './regions.json' with {type:'json'};
 import { COUNTRY_OPTIONS, normalizeLevels } from './preferences.js';
 
 export const STAGES = ['Saved', 'Preparing', 'Applied', 'OA', 'Interview', 'Offer', 'Rejected', 'Withdrawn', 'Accepted'];
-export const SLOTS = ['08:30', '10:30', '12:30', '14:30', '16:30', '18:30'];
+export const SLOTS = ['09:00'];
 export const PREFERENCES = {
   titles: [], aliases: [], seniority: [], employmentType: [], locations: [], countries: [], workMode: [], freshnessHours: 24,
   sponsorship: 'Unspecified', minimumPay: null, currency: 'USD', period: 'year', industries: [], companies: [],
@@ -10,8 +10,8 @@ export const PREFERENCES = {
 };
 export const DEFAULTS = {
   mode: 'Active', generation: 0, onboarded: false, preferences: PREFERENCES, profile: {}, slots: SLOTS,
-  searchesPerRound: 3, roundsPerDay: 6, budget: 10, dailyBudget: 2, runBudget: 0.15, autoMatch: true,
-  model: 'claude-haiku-5-5', draftModel: 'claude-haiku-5-5', directAlerts: true, advance: false,
+  searchesPerRound: 3, roundsPerDay: 2, budget: 10, dailyBudget: 2, runBudget: 0.15, autoMatch: true, dailySearch: true,
+  model: 'claude-haiku-5-5', draftModel: 'claude-haiku-5-5', directAlerts: true,
   gmail: false, markRead: false, gmailDays: 14, jdDays: 30, tombstoneDays: 180
 };
 const TRACKING = /^(utm_\w+|gh_src|lever-source|source|fbclid|gclid|ref_src)$/i;

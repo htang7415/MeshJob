@@ -40,8 +40,10 @@ const manifest={
     'open-full-view':{suggested_key:{default:'Alt+Shift+F'},description:'Open MeshJob full view'}},
   content_security_policy:{extension_pages:"script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"}
 };
-if(process.env.MESHJOB_OAUTH_CLIENT_ID) {
-  const id=process.env.MESHJOB_OAUTH_CLIENT_ID;
+// Release builds ship the MeshJob Chrome Extension OAuth client (a client ID is not a secret) so Gmail connects in one click.
+const shippedClient=await readFile(path('scripts/oauth-client-id.txt'),'utf8').then(value=>value.trim()).catch(()=>'');
+if(process.env.MESHJOB_OAUTH_CLIENT_ID||shippedClient) {
+  const id=process.env.MESHJOB_OAUTH_CLIENT_ID||shippedClient;
   if(!/^[\w-]+\.apps\.googleusercontent\.com$/.test(id)) throw new Error('Provide a Google Chrome Extension OAuth client ID.');
   manifest.oauth2={client_id:id,scopes:['https://www.googleapis.com/auth/gmail.readonly']};
 }

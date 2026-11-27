@@ -191,7 +191,7 @@ const configSchema=z.object({
   }).optional(),
   onboarded:z.boolean().optional(),slots:z.array(z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/)).max(12).optional(),
   searchesPerRound:z.number().int().min(1).max(5).optional(),roundsPerDay:z.number().int().min(0).max(12).optional(),
-  budget:cost.optional(),dailyBudget:cost.optional(),runBudget:cost.optional(),autoMatch:z.boolean().optional(),directAlerts:z.boolean().optional(),
+  budget:cost.optional(),dailyBudget:cost.optional(),runBudget:cost.optional(),autoMatch:z.boolean().optional(),directAlerts:z.boolean().optional(),dailySearch:z.boolean().optional(),
   advance:z.boolean().optional(),model:z.string().max(100).optional(),draftModel:z.string().max(100).optional(),
   gmailDays:z.number().int().min(1).max(45).optional(),gmailFilter:z.string().max(180).optional(),mailAI:z.boolean().optional(),
   jdDays:z.number().int().min(1).max(3650).optional(),tombstoneDays:z.number().int().min(1).max(3650).optional(),

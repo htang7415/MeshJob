@@ -1,12 +1,12 @@
 import { db, settings } from './db.js';
-import { list, SLOTS, structuredValue } from './domain.js';
+import { ATS_ORIGINS, structuredValue } from './domain.js';
 import { ANSWER_PRESETS, fieldQuestion, PROFILE_KEYS } from './form-rules.js';
 import { PRICES, PRICE_VERSION } from './intelligence.js';
 import { MAIL_ORIGINS } from './mail.js';
 import { COUNTRY_OPTIONS } from './preferences.js';
-import { removeMaterial, saveAnswer, storeMaterial } from './materials.js';
+import { removeMaterial, saveAnswer, storeMaterial, versionLabel } from './materials.js';
 import { previewBackup, restoreBackup } from './portability.js';
-import { badge,button,check,dataTable,dateLabel,el,elements,field,formDialog,input,link,money,paragraph,permit,readTokens,rpc,select,task,textarea,toast,tokenField } from './ui.js';
+import { badge,button,check,dataTable,dateLabel,el,elements,field,formDialog,input,money,paragraph,permit,readTokens,rpc,select,task,textarea,toast,tokenField } from './ui.js';
 
 const defaultSelect=(name,material,rows,current)=>field(material,select(name,[['','No default'],...rows.map(row=>[row.id,row.label])],current??''));
 const buildForm=(children,submit,label='Save changes')=>el('form',{class:'stack',autocomplete:'off',onsubmit:task(async event=>{
@@ -117,9 +117,9 @@ function documentsView(config,rows) {
     const key=type==='resume'?'defaultResume':'defaultCover';
     return el('div',{class:'document-group stack'},
       el('div',{class:'flex between'},el('h3',{},type==='resume'?'Resumes':'Cover letters'),button('Add '+label.toLowerCase(),()=>materialDialog(type))),
-      items.length?el('ul',{class:'clean-list'},items.map(item=>el('li',{class:'flex between'},
-        el('div',{},el('strong',{},item.label),paragraph(item.name+' · revision '+item.revision,'meta')),
-        el('div',{class:'actions'},button('Preview PDF',()=>pdfPreview(item)),button('Edit',()=>materialDialog(type,item)),button('Delete',()=>remove(item),'danger'))
+      items.length?el('ul',{class:'inset'},items.map(item=>el('li',{},
+        el('div',{},el('strong',{},versionLabel(item)),paragraph(item.name,'meta')),
+        el('div',{class:'actions'},button('Preview',()=>pdfPreview(item),'small'),button('Edit',()=>materialDialog(type,item),'small',{'aria-label':'Edit '+item.label}),button('Delete',()=>remove(item),'danger small'))
       ))):paragraph('No '+label.toLowerCase()+' PDFs yet.','meta'),
       items.length>0&&buildForm(defaultSelect(key,'Default '+label.toLowerCase(),items,config[key]),async values=>{
         await rpc('settings:update',{config:values});toast('Default document saved.');
@@ -166,7 +166,7 @@ function answersView(answers) {
   });
   const custom=answers.filter(answer=>!displayed.has(answer.id));
   return [
-    el('div',{class:'flex between'},paragraph('Reuse these answers when an application asks the same question.'),button('Add custom answer',()=>answerDialog())),
+    el('div',{class:'actions'},button('Add custom answer',()=>answerDialog(),'small')),
     el('h3',{},'Work eligibility and equal employment'),el('ul',{class:'clean-list'},rows),
     custom.length>0&&el('h3',{},'Custom answers'),
     custom.length>0&&el('ul',{class:'clean-list'},custom.map(answer=>el('li',{class:'answer-row'},
@@ -184,110 +184,67 @@ function operation(label,type) {
   void rpc(type,{op:id}).then(data=>{status.textContent=data?.result ? data.result.accepted+' recruitment events · '+data.result.urgent+' urgent.':'Completed. See integration status.';},
     error=>{status.textContent=error.message;}).finally(()=>{done=true;action.replaceWith(button('Close',()=>dialog.close(),'primary'));});
 }
-function integrations(config,health) {
-  const indicators={claude:el('span'),gmail:el('span')};
-  const refresh=async()=>{
-    const data=await rpc('integrations:status');
-    indicators.claude.replaceChildren(badge(data.claude?'Key stored':'Optional',data.claude?'ok':'muted'));
-    indicators.gmail.replaceChildren(badge(!data.gmailConfigured?'OAuth build needed':config.gmail?'Connected':'Optional',config.gmail?'ok':'muted'));
-  };
-  void refresh().catch(()=>{});
-  const claudeKey=()=>formDialog('Claude API key',[
-    field('Personal Claude API key',input('key','',{type:'password',autocomplete:'off',required:true})),
-    paragraph('Chrome stores the key locally in trusted MeshJob contexts. It is not encrypted by MeshJob. Paid requests send relevant excerpts to Anthropic.')
-  ],async ({key})=>{
-    await permit(['https://api.anthropic.com/*']);
-    await rpc('secret:claude',{key});await refresh();toast('Claude key stored.');
-  },'Connect Claude');
-  const gmail=modify=>task(async()=>{
-    const current=await rpc('integrations:status');
-    if(!current.gmailConfigured) throw new Error('Build MeshJob with your Google Chrome Extension OAuth client first. See the README.');
-    await permit(MAIL_ORIGINS,['identity']);
-    await rpc('gmail:connect',{modify});toast(modify?'Gmail modify access granted.':'Gmail read-only access granted.');
-  });
-  return [
-    el('div',{class:'stack'},el('div',{class:'flex between'},el('h3',{},'Claude'),indicators.claude),
-      paragraph('Bring your own key for matching, web search, and reviewed autofill suggestions.'),
-      el('div',{class:'actions'},button('Set API key',claudeKey),button('Clear key',task(async()=>{await rpc('secret:claude',{key:''});await refresh();},'Claude key cleared.')))),
-    el('div',{class:'stack'},el('div',{class:'flex between'},el('h3',{},'Gmail'),indicators.gmail),
-      paragraph(config.gmail?config.markRead?'Modify consent granted. Only eligible routine messages can be marked read.':'Read-only consent granted.':'Connect a Gmail account for recruitment updates and urgent alerts.'),
-      health?.successAt&&paragraph('Last sync '+dateLabel(health.successAt),'meta'),
-      health?.attemptAt&&paragraph('Last attempt '+dateLabel(health.attemptAt),'meta'),
-      health?.error&&paragraph(health.error,'form-error'),
-      el('div',{class:'actions'},!config.gmail&&button('Connect read-only',gmail(false)),
-        config.gmail&&button('Sync now',()=>operation('Sync Gmail','gmail:sync')),
-        config.gmail&&!config.markRead&&button('Enable routine mark-read',()=>formDialog('Enable routine mark-read',[
-          paragraph('When a routine confirmation or rejection is confidently linked and stored, MeshJob can remove its unread label. Actionable and ambiguous messages stay unread.'),
-          button('Request modify access',gmail(true),'primary')
-        ])),
-        config.markRead&&button('Turn off mark-read',task(()=>rpc('gmail:readonly'),'Automatic mark-read turned off.')),
-        config.gmail&&button('Disconnect',()=>formDialog('Disconnect Gmail',[
-          paragraph('Previously recorded events remain available.'),
-          check('revoke','Also revoke Google access')
-        ],async values=>{await rpc('gmail:disconnect',{revoke:!!values.revoke});toast('Gmail disconnected.');},'Disconnect')),
-        button('Test notification',task(()=>rpc('notification:test'),'Test notification requested.'))),
-      buildForm(el('div',{class:'form-grid'},field('Recovery window in days',input('gmailDays',config.gmailDays,{type:'number',min:1,max:45,required:true})),
-        field('Additional Gmail recovery query',input('gmailFilter',config.gmailFilter??'',{maxlength:180})),
-        check('mailAI','Use Claude to review excerpts of ambiguous urgent messages',config.mailAI??false)),
-      async values=>{
-        await rpc('settings:update',{config:{gmailDays:Number(values.gmailDays),gmailFilter:values.gmailFilter,mailAI:!!values.mailAI}});toast('Gmail scope saved.');
-      },'Save Gmail settings'))
-  ];
+const row=(label,control,help)=>el('li',{},el('div',{class:'label'},el('span',{},label),help&&el('small',{},help)),el('div',{class:'control'},control));
+const toggle=(name,label,checked,help)=>{
+  const box=input(name,'1',{type:'checkbox',checked,'aria-label':label});
+  box.addEventListener('change',task(()=>rpc('settings:update',{config:{[name]:box.checked}}),'Saved.'));
+  return row(label,box,help);
+};
+function jobSearch(config,{searchMode,discoveryPreferences}) {
+  const access=el('span',{},'Checking…');
+  void rpc('integrations:status').then(status=>access.replaceChildren(status.atsAccess?badge('Allowed','ok'):
+    button('Allow',task(async()=>{await permit(ATS_ORIGINS);access.replaceChildren(badge('Allowed','ok'));}),'small'))).catch(()=>{});
+  return el('ul',{class:'settings-list'},
+    row('Discovery preferences',button('Edit',()=>discoveryPreferences(),'small')),
+    row('Search status',button(config.mode,()=>searchMode(config),'small',{'aria-label':'Search '+config.mode.toLowerCase()}),'Pause or finish automatic checks and alerts.'),
+    row('Job application sites',access,'Lets the Side Panel follow Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable pages.'),
+    toggle('directAlerts','New job notifications',config.directAlerts));
 }
-function registrationCredentials(config) {
-  const email=el('p',{class:'meta'}), status=el('span');
-  let savedEmail='';
-  const refresh=async()=>{
-    const data=await rpc('integrations:status');
-    savedEmail=data.registrationEmail;
-    email.textContent=savedEmail||config.profile.email||'No registration email set';
-    status.replaceChildren(badge(data.password?(data.persistent?'Local plaintext':'Session only'):'Off',data.password?'warn':'muted'));
-  };
+function claude(config,usage) {
+  const status=el('span',{});
+  const refresh=async()=>{const data=await rpc('integrations:status');status.replaceChildren(data.claude?badge('Connected','ok'):badge('Not connected'));};
   void refresh().catch(()=>{});
-  const edit=()=>formDialog('Edit registration credentials',[
-    field('Registration email',input('email',savedEmail,{type:'email',placeholder:config.profile.email||'name@example.com',maxlength:254}),
-      'Leave blank to use your Profile email.'),
-    field('New password',input('value','',{type:'password',autocomplete:'new-password',maxlength:256}),
-      'Leave blank to keep your saved password.'),
-    check('persist','Keep this password in local plaintext between Chrome sessions'),
-    check('consent','I understand the plaintext and password-reuse risks.')
-  ],async values=>{
-    await rpc('secret:registration',{email:values.email,...(values.value?{value:values.value,persist:!!values.persist,consent:!!values.consent}:{})});
-    await refresh();toast('Registration credentials saved.');
-  },'Save credentials');
-  return el('div',{class:'stack'},
-    el('div',{class:'flex between'},el('div',{},el('strong',{},'Registration email'),email),
-      el('div',{class:'inline-group'},el('strong',{},'Password'),status)),
-    el('div',{class:'actions'},button('Edit credentials',edit),
-      button('Clear password',task(async()=>{await rpc('secret:registration',{value:''});await refresh();},'Registration password removed.'))));
-}
-
-function schedules(config,usage) {
-  const models=Object.keys(PRICES);
   const month=new Date().toLocaleDateString('en-CA',{year:'numeric',month:'2-digit'});
-  const spent=usage.filter(row=>row.month===month).reduce((total,row)=>total+row.cost,0);
-  return buildForm([
-    el('div',{class:'form-grid'},
-      field('Claude search times · local clock',input('slots',config.slots.join(', '),{placeholder:SLOTS.join(', ')}),'Separate times with commas.'),
-      field('Web searches per round',input('searchesPerRound',config.searchesPerRound,{type:'number',min:1,max:5,required:true})),
-      field('Rounds per day',input('roundsPerDay',config.roundsPerDay,{type:'number',min:0,max:12,required:true})),
-      field('Monthly budget · USD',input('budget',config.budget,{type:'number',min:0,max:10000,step:'.01',required:true})),
-      field('Daily budget · USD',input('dailyBudget',config.dailyBudget,{type:'number',min:0,max:10000,step:'.01',required:true})),
-      field('Per request budget · USD',input('runBudget',config.runBudget,{type:'number',min:0,max:10000,step:'.01',required:true})),
-      field('Matching and classification model',select('model',models,config.model)),field('Open-ended answer model',select('draftModel',models,config.draftModel)),
-      field('Job description retention in days',input('jdDays',config.jdDays,{type:'number',min:1,max:3650,required:true})),
-      field('Closed job detail retention in days',input('tombstoneDays',config.tombstoneDays,{type:'number',min:1,max:3650,required:true}))),
-    check('autoMatch','Automatically evaluate eligible new jobs when Claude is connected',config.autoMatch),
-    check('directAlerts','Notify me about verified recent jobs',config.directAlerts),
-    check('advance','Allow reviewed non-final Workday navigation',config.advance),
-    paragraph('Estimated or reserved this month '+money(spent)+' · Pricing checked '+PRICE_VERSION+'. App-side limits estimate usage. Check your provider billing controls.'),
-    link('Claude model and tool prices','https://platform.claude.com/docs/en/about-claude/pricing')
-  ],async values=>{
-    const keys=['searchesPerRound','roundsPerDay','budget','dailyBudget','runBudget','jdDays','tombstoneDays'];
-    const patch=Object.fromEntries(keys.map(key=>[key,Number(values[key])]));
-    Object.assign(patch,{slots:list(values.slots),model:values.model,draftModel:values.draftModel,autoMatch:!!values.autoMatch,directAlerts:!!values.directAlerts,advance:!!values.advance});
-    await rpc('settings:update',{config:patch});toast('Schedules and budget saved.');
-  },'Save schedules');
+  const spent=usage.filter(item=>item.month===month).reduce((total,item)=>total+item.cost,0);
+  const key=()=>formDialog('Claude API key',[
+    field('API key',input('key','',{type:'password',autocomplete:'off',required:true})),
+    paragraph('Stored locally in this Chrome profile, unencrypted. Requests send only relevant excerpts to Anthropic.')
+  ],async ({key})=>{await permit(['https://api.anthropic.com/*']);await rpc('secret:claude',{key});await refresh();toast('Claude connected.');},'Connect');
+  const budget=input('budget',config.budget,{type:'number',min:0,max:10000,step:'1','aria-label':'Monthly budget in USD'});
+  budget.addEventListener('change',task(()=>rpc('settings:update',{config:{budget:Number(budget.value)}}),'Budget saved.'));
+  const models=Object.keys(PRICES);
+  const model=select('model',models,config.model,{'aria-label':'Model'});
+  model.addEventListener('change',task(()=>rpc('settings:update',{config:{model:model.value,draftModel:model.value}}),'Model saved.'));
+  return [el('ul',{class:'settings-list'},
+    row('Claude',el('span',{class:'actions'},status,button('Set key',key,'small'),button('Clear',task(async()=>{await rpc('secret:claude',{key:''});await refresh();}),'quiet small'))),
+    row('Monthly budget · USD',budget,'Spent this month '+money(spent)+'. Estimates can differ from provider billing.'),
+    toggle('autoMatch','Match new jobs',config.autoMatch,'Scores new matching jobs against your profile.'),
+    toggle('dailySearch','Daily web search',config.dailySearch,'Looks for new employers once a day.')),
+    el('details',{class:'more'},el('summary',{},'Advanced'),el('ul',{class:'settings-list'},row('Model',model,'Pricing checked '+PRICE_VERSION+'.')))];
+}
+function gmail(config,health) {
+  const status=el('span',{});
+  const refresh=async()=>{
+    const data=await rpc('integrations:status');
+    status.replaceChildren(config.gmail?badge('Connected','ok'):data.gmailConfigured?button('Connect Gmail',connect,'primary small'):badge('Not available in this build'));
+  };
+  const connect=task(async()=>{
+    await permit(MAIL_ORIGINS,['identity']);
+    await rpc('gmail:connect');toast('Gmail connected. MeshJob reads recruiting mail only.');
+  });
+  void refresh().catch(()=>{});
+  return el('ul',{class:'settings-list'},
+    row('Gmail',status,config.gmail?(health?.successAt?'Last sync '+dateLabel(health.successAt):'Waiting for first sync')+(health?.error?' · '+health.error:''):'Read-only. Finds confirmations, interviews and assessments.'),
+    config.gmail&&row('Sync',el('span',{class:'actions'},button('Sync now',()=>operation('Sync Gmail','gmail:sync'),'small'),
+      button('Disconnect',()=>formDialog('Disconnect Gmail',[paragraph('Recorded events stay.'),check('revoke','Also revoke Google access')],
+        async values=>{await rpc('gmail:disconnect',{revoke:!!values.revoke});toast('Gmail disconnected.');},'Disconnect'),'quiet small'))),
+    row('Notifications',button('Send test',task(()=>rpc('notification:test'),'Test notification sent.'),'small')));
+}
+function registrationEmail(config) {
+  const value=input('registrationEmail','',{type:'email',placeholder:config.profile.email||'name@example.com','aria-label':'Registration email',maxlength:254});
+  void rpc('integrations:status').then(data=>{value.value=data.registrationEmail;}).catch(()=>{});
+  value.addEventListener('change',task(()=>rpc('secret:registration',{email:value.value}),'Registration email saved.'));
+  return el('ul',{class:'settings-list'},row('Registration email',value,'Used on ATS sign-up forms. Chrome Password Manager handles passwords.'));
 }
 function restoreDialog() {
   const file=input('backup','',{type:'file',accept:'.zip,application/zip',required:true});
@@ -324,7 +281,6 @@ function localData({backup,storageHelp}) {
     estimate.textContent=typeof data.usage==='number'?'Chrome reports '+(data.usage/1048576).toFixed(2)+' MiB in use for this extension.':'Storage estimate unavailable.';
   }).catch(()=>{estimate.textContent='Storage estimate unavailable.';});
   return [
-    paragraph('Backups include personal records, verified answers, and PDF files. Credentials stay in this Chrome profile. Export before uninstalling.'),
     estimate,el('div',{class:'actions'},button('Download backup ZIP',task(backup),'primary'),button('Import backup ZIP',restoreDialog),button('Storage details',storageHelp),
       button('Clear all MeshJob data',()=>formDialog('Clear local MeshJob data',[
         paragraph('This permanently removes MeshJob records and local credentials on this device. You can export a backup first.'),
@@ -334,16 +290,15 @@ function localData({backup,storageHelp}) {
 }
 export function profileView({config,materials,answers,health,usage},controls) {
   const parts=[
-    ['1','Personal details',[factsForm(config),profileHistory(config.profile,'education'),profileHistory(config.profile,'experience'),skillsForm(config.profile)]],
-    ['2','Documents',documentsView(config,materials)],
-    ['3','Verified answers',answersView(answers)],
-    ['4','Integrations',integrations(config,health)],
-    ['password','Registration credentials',registrationCredentials(config)],
-    ['5','Schedules and budget',schedules(config,usage)],
-    ['6','Local data',localData(controls)]
+    ['Profile',[factsForm(config),profileHistory(config.profile,'education'),profileHistory(config.profile,'experience'),skillsForm(config.profile)]],
+    ['Documents',documentsView(config,materials)],
+    ['Answers',answersView(answers)],
+    ['Job search',jobSearch(config,controls)],
+    ['Claude',claude(config,usage)],
+    ['Gmail',gmail(config,health)],
+    ['Registration',registrationEmail(config)],
+    ['Data',localData(controls)]
   ];
-  return el('div',{},el('header',{class:'page-head'},el('div',{},el('h1',{},'Profile'),paragraph('Manage your application details, documents, and integrations.'))),
-    el('div',{class:'layout'},el('aside',{class:'sidebar'},el('nav',{class:'profile-nav','aria-label':'Profile sections'},parts.map(([id,label])=>
-      el('a',{href:'#profile/'+id,onclick:event=>{event.preventDefault();document.getElementById('profile-'+id)?.scrollIntoView({block:'start'});}},label)))),
-    el('div',{class:'stack large'},parts.map(([id,label,content])=>el('section',{class:'section',id:'profile-'+id,style:'scroll-margin-top:95px'},el('h2',{},label),content)))));
+  return el('div',{class:'stack large'},el('header',{class:'page-head'},el('h1',{},'Settings')),
+    parts.map(([label,content])=>el('section',{class:'section'},el('h2',{},label),el('div',{class:'stack'},content))));
 }

@@ -3,9 +3,8 @@ import { httpUrl, normalized, nowISO, trim } from './domain.js';
 import { appendEvent } from './tracker.js';
 
 export const MAIL_ORIGINS = ['https://gmail.googleapis.com/*','https://oauth2.googleapis.com/*'];
-export const MAIL_SCOPES = {
-  read:'https://www.googleapis.com/auth/gmail.readonly', modify:'https://www.googleapis.com/auth/gmail.modify'
-};
+// Read-only: MeshJob never changes the mailbox (spec 7).
+export const MAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 const MAIL_ID = /^[a-z\d_-]{1,150}$/i;
 const allowed = {
   assessment:[/\b(?:online|technical|coding|skills|take.home|pre.employment|timed) (?:assessment|test|challenge)\b/,/\b(?:hackerrank|codesignal|codility|testgorilla|criteria corp)\b/,/\bassessment (?:invitation|invite|due|deadline|link)\b/,/\b(?:coding exercise|assessment exercise|technical screen.{0,90}complete the exercise)\b/],
@@ -71,35 +70,35 @@ function deadlineOf(copy) {
   if (!match) return null;
   return { text:match[1],timezone:match[1].match(/(?:Z|[+-]\d\d:\d\d|UTC|GMT|[PMCE][SD]T)$/)?.[0] ?? null };
 }
-export function mailEvent(mail,classification,app) {
+export const mailLink=(id,account)=>'https://mail.google.com/mail/'+(account?'?authuser='+encodeURIComponent(account):'u/0/')+'#all/'+encodeURIComponent(id);
+export function mailEvent(mail,classification,app,account) {
   const stages = {confirmation:'Applied',rejection:'Rejected',assessment:'OA',interview:'Interview',offer:'Offer'};
   const trusted = !!app && classification.confidence === 'High';
   return {
     id:'gmail:'+mail.id,messageId:mail.id,threadId:mail.threadId,applicationId:trusted ? app.id : undefined,at:mail.at,
     kind:trusted && classification.category === 'confirmation' ? 'email-confirmation' : 'email',
     stage:trusted ? stages[classification.category] : undefined,category:classification.category,
-    subject:mail.subject,excerpt:mail.snippet.slice(0,360),url:'https://mail.google.com/mail/u/0/#all/'+encodeURIComponent(mail.id),
+    subject:mail.subject,excerpt:mail.snippet.slice(0,360),url:mailLink(mail.id,account),
     urgent:classification.urgent,review:!trusted && (classification.urgent || classification.category !== 'unknown'),
-    deadline:classification.urgent ? deadlineOf(mail.subject+' '+mail.snippet) : null,
-    pendingRead:trusted && !classification.urgent && ['confirmation','rejection'].includes(classification.category) && mail.unread
+    deadline:classification.urgent ? deadlineOf(mail.subject+' '+mail.snippet) : null
   };
 }
 
 function oauthConfigured() {
   return !!chrome.runtime.getManifest().oauth2?.client_id;
 }
-export async function getMailToken({interactive=false,modify=false}={}) {
+export async function getMailToken({interactive=false}={}) {
   if (!oauthConfigured()) throw new Error('This build has no Gmail OAuth client. Follow the user-owned OAuth setup in the README.');
   const granted = await chrome.permissions.contains({permissions:['identity'],origins:MAIL_ORIGINS});
   if (!granted) throw new Error('Gmail permissions are missing.');
-  const result = await chrome.identity.getAuthToken({interactive,scopes:[modify?MAIL_SCOPES.modify:MAIL_SCOPES.read],enableGranularPermissions:true});
-  if (!result.token || (result.grantedScopes && !result.grantedScopes.includes(modify?MAIL_SCOPES.modify:MAIL_SCOPES.read))) throw new Error('Gmail consent was not granted.');
+  const result = await chrome.identity.getAuthToken({interactive,scopes:[MAIL_SCOPE],enableGranularPermissions:true});
+  if (!result.token || (result.grantedScopes && !result.grantedScopes.includes(MAIL_SCOPE))) throw new Error('Gmail consent was not granted.');
   return result.token;
 }
 export async function disconnectMail(revoke=false) {
   if (oauthConfigured() && revoke) {
     let token;
-    try { token = await getMailToken({modify:(await settings()).markRead}); } catch { /* Consent can already be absent. */ }
+    try { token = await getMailToken(); } catch { /* Consent can already be absent. */ }
     if (token) {
       const response = await fetch('https://oauth2.googleapis.com/revoke',{
         method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
@@ -129,7 +128,15 @@ export function gmailHttp(token,signal,fetcher=fetch) {
   };
 }
 
-const RECRUITING_QUERY = '{application applicant recruiting recruiter hiring interview assessment "offer letter" "next steps" "talent acquisition" "pre-employment"} -in:spam -in:trash';
+const SENDERS = ['greenhouse.io','greenhouse-mail.io','ashbyhq.com','lever.co','hire.lever.co','myworkday.com','workday.com','smartrecruiters.com','workablemail.com',
+  'icims.com','jobvite.com','hackerrank.com','codesignal.com','codility.com','karat.io','goodtime.io','calendly.com','gem.com','modernloop.io'];
+const ALERTS = ['jobalerts-noreply@linkedin.com','jobs-listings@linkedin.com','alert@indeed.com','noreply@glassdoor.com','jobs@ziprecruiter.com'];
+// Built from ATS senders, tracked employers and recruiting words; job-alert newsletters and promotions are excluded.
+export function recruitingQuery(companies=[]) {
+  const names=[...new Set(companies.map(name=>trim(name).replace(/["{}()]/g,'')).filter(name=>name.length>=3))].slice(0,25).map(name=>'"'+name+'"');
+  const words=['application','applicant','interview','assessment','"offer letter"','"next steps"','recruiter','recruiting'];
+  return '{'+[...SENDERS.map(domain=>'from:'+domain),...names,...words].join(' ')+'} -category:promotions '+ALERTS.map(from=>'-from:'+from).join(' ')+' -in:spam -in:trash';
+}
 const PAGE = 20;
 const MAX_PAGES = 3;
 function normalizeMail(message) {
@@ -149,7 +156,7 @@ export async function syncMail({config,generation,signal,notify,api,ai}) {
   if (!lease) return;
   let accepted = 0, urgent = 0;
   try {
-    const token = api ? null : await getMailToken({modify:config.markRead});
+    const token = api ? null : await getMailToken();
     const request = api ?? gmailHttp(token,signal);
     async function check() {
       signal?.throwIfAborted();
@@ -176,8 +183,7 @@ export async function syncMail({config,generation,signal,notify,api,ai}) {
         if (classification.category === 'unknown' && !classification.urgent) continue;
         const thread = await db.events.where('threadId').equals(message.threadId).toArray();
         const app = linkMail(message,apps,thread);
-        const event = mailEvent(message,classification,app);
-        event.pendingRead &&= config.markRead;
+        const event = mailEvent(message,classification,app,state?.account);
         const result = await appendEvent(event,generation);
         if (result?.event) {
           accepted++;
@@ -189,14 +195,14 @@ export async function syncMail({config,generation,signal,notify,api,ai}) {
     for (let page=0;page<MAX_PAGES;page++) {
       await check();
       if (!state?.base) {
-        state = {...state,base:(await request('/profile')).historyId,recover:true,pageToken:null};
+        const profile=await request('/profile');
+        state = {...state,base:profile.historyId,account:typeof profile.emailAddress==='string'?profile.emailAddress.slice(0,254):state?.account,recover:true,pageToken:null};
         if (!state.base) throw new Error('Gmail did not supply a history cursor.');
         await saveCursor(state,generation);
       }
-      const start = Date.now()-config.gmailDays*86400000;
+      const start = Date.now()-14*86400000;
       if (state.recover) {
-        const query = 'after:'+Math.floor(start/1000)+' '+RECRUITING_QUERY+
-          (config.gmailFilter ? ' '+config.gmailFilter.slice(0,180) : '');
+        const query = 'after:'+Math.floor(start/1000)+' '+recruitingQuery((await db.applications.toArray()).map(app=>app.company));
         const batch = await request('/messages',{query:{q:query,maxResults:PAGE,pageToken:state.pageToken}});
         await processIds((batch.messages ?? []).map(item=>item.id));
         state = {...state,pageToken:batch.nextPageToken ?? null,recover:!!batch.nextPageToken};
@@ -214,23 +220,6 @@ export async function syncMail({config,generation,signal,notify,api,ai}) {
       }
       await saveCursor(state,generation);
       if (!state.pageToken) break;
-    }
-    if (config.markRead) {
-      const awaiting = await db.events.filter(event=>event.pendingRead && !event.urgent && !event.review && ['confirmation','rejection'].includes(event.category)).limit(20).toArray();
-      for (const event of awaiting) {
-        if (!(await check()).markRead) break;
-        if (await db.events.get('undo:'+event.id)) {
-          await guarded(generation,[db.events],()=>db.events.update(event.id,{pendingRead:false}));
-          continue;
-        }
-        try {
-          await request('/messages/'+encodeURIComponent(event.messageId)+'/modify',{body:{removeLabelIds:['UNREAD']}});
-          await guarded(generation,[db.events],()=>db.events.update(event.id,{pendingRead:false,markedReadAt:nowISO()}));
-        } catch (error) {
-          if (error.status === 404) await guarded(generation,[db.events],()=>db.events.update(event.id,{pendingRead:false}));
-          else throw error;
-        }
-      }
     }
     await check();
     if (notify) await notify(generation);

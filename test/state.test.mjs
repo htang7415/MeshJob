@@ -163,27 +163,21 @@ test('backup round-trip preserves linked history, job description, PDF, and stri
   assert.equal((await db.events.where('applicationId').equals(application.id).toArray()).length,2);
   assert.equal((await restoreBackup(pack,'merge')).applications,0);
 });
-test('Gmail auto-read is per message, commit-before-modify, and idempotent for replayed history',async()=>{
+test('Gmail sync is read-only, idempotent for replayed history, and links the right account',async()=>{
   const {application}=await saveApplication(fixtureJob);
-  await updateSettings({gmail:true,markRead:true,gmailDays:14});
+  await updateSettings({gmail:true});
   const examples={
     m1:{...fixtureMail,at:new Date().toISOString()},
     m2:{...fixtureMail,id:'m2',threadId:'thread2',subject:'CodeSignal assessment invitation',snippet:'Please complete by 2026-12-05 at 10:00 EST.',at:new Date().toISOString()},
     m3:{...fixtureMail,id:'m3',threadId:'thread3',subject:'Acme Health recruitment next steps',snippet:'Please respond about your application.',at:new Date().toISOString()}
   };
-  const modified=[];
-  let reads=0,notifies=0;
+  let reads=0,notifies=0,query='';
   const api=async (path,args={})=>{
-    if(path==='/profile')return {historyId:'100'};
+    assert.ok(!path.endsWith('/modify')&&!args.body,'MeshJob must not write to Gmail');
+    if(path==='/profile')return {historyId:'100',emailAddress:'person@example.invalid'};
     if(path==='/history')return {historyId:'101',history:[{messagesAdded:Object.keys(examples).map(id=>({message:{id}}))}]};
-    if(path==='/messages')return {messages:Object.keys(examples).map(id=>({id}))};
+    if(path==='/messages'){query=args.query.q;return {messages:Object.keys(examples).map(id=>({id}))};}
     const id=path.split('/')[2],row=examples[id];
-    if(path.endsWith('/modify')) {
-      assert.equal(id,'m1');assert.deepEqual(args.body,{removeLabelIds:['UNREAD']});
-      assert.equal((await db.events.get('gmail:'+id)).applicationId,application.id);
-      assert.equal((await db.applications.get(application.id)).status,'Applied');
-      modified.push(id);return {};
-    }
     assert.equal(args.query.format,'full');
     assert.ok(!/body|parts|raw|attachments/.test(args.query.fields));
     reads++;
@@ -193,9 +187,13 @@ test('Gmail auto-read is per message, commit-before-modify, and idempotent for r
   const config=await settings();
   await syncMail({config,api,notify:()=>{notifies++;}});
   await syncMail({config,api,notify:()=>{notifies++;}});
-  assert.deepEqual(modified,['m1']);assert.equal(reads,3);assert.equal(notifies,2);
+  assert.equal(reads,3);assert.equal(notifies,2);
+  assert.match(query,/from:greenhouse\.io/);assert.match(query,/"Acme Health"/);assert.match(query,/-category:promotions/);
+  assert.equal((await db.applications.get(application.id)).status,'Applied');
+  const confirmation=await db.events.get('gmail:m1');
+  assert.equal(confirmation.url,'https://mail.google.com/mail/?authuser=person%40example.invalid#all/m1');
   const actions=await db.events.filter(e=>e.urgent).toArray();
-  assert.equal(actions.length,2);assert.ok(actions.every(e=>!e.pendingRead&&!e.applicationId));
+  assert.equal(actions.length,2);assert.ok(actions.every(e=>!e.applicationId));
 });
 test('company alone does not link multiple or single applications',async()=>{
   const examples=[{...fixtureJob,id:'a',createdAt:'2026-11-19T00:00:00Z'},
@@ -204,7 +202,7 @@ test('company alone does not link multiple or single applications',async()=>{
   assert.equal(linkMail({...fixtureMail,subject:'From Acme Health',snippet:'Please give us availability.'},examples),null);
   const action={...fixtureMail,subject:'Your offer letter',snippet:'Please sign by November 25, 2026 at 9:00 EST.'};
   const event=mailEvent(action,classifyMail(action),null);
-  assert.equal(event.urgent,true);assert.equal(event.pendingRead,false);assert.equal(event.deadline.timezone,'EST');
+  assert.equal(event.urgent,true);assert.equal(event.deadline.timezone,'EST');
 });
 test('Claude reserves budget, caps search tool uses, and reconciles actual estimated cost',async()=>{
   const config=await updateSettings({budget:.08,dailyBudget:.08,runBudget:.08,searchesPerRound:3});
