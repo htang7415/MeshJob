@@ -198,6 +198,8 @@ export async function syncMail({config,generation,signal,notify,api,ai}) {
       if (!current.gmail || (generation != null && (current.generation !== generation || current.mode !== 'Active'))) throw new Error('Gmail sync cancelled.');
       return current;
     }
+    // Only mail received after the mailbox was connected is read (spec 7); older mail is never fetched.
+    const since = Number.isFinite(Date.parse(config.gmailSince)) ? Date.parse(config.gmailSince) : Date.now()-14*86400000;
     async function processIds(ids) {
       const apps = await db.applications.toArray();
       for (const id of [...new Set(ids)].filter(value=>MAIL_ID.test(value ?? ''))) {
@@ -206,7 +208,7 @@ export async function syncMail({config,generation,signal,notify,api,ai}) {
         let message;
         try { message = normalizeMail(await request('/messages/'+encodeURIComponent(id),{query:{format:'full',fields:'id,threadId,internalDate,payload/headers,snippet,labelIds'}})); }
         catch (error) { if (error.status===404) continue; throw error; }
-        if (message.excluded) continue;
+        if (message.excluded || Date.parse(message.at) < since) continue;
         let classification = classifyMail(message);
         if (ai && classification.category === 'unknown' && classification.urgent) {
           try {
@@ -234,7 +236,7 @@ export async function syncMail({config,generation,signal,notify,api,ai}) {
         if (!state.base) throw new Error('Gmail did not supply a history cursor.');
         await saveCursor(state,generation);
       }
-      const start = Date.now()-14*86400000;
+      const start = Math.max(since, Date.now()-14*86400000);
       if (state.recover) {
         const query = 'after:'+Math.floor(start/1000)+' '+recruitingQuery((await db.applications.toArray()).map(app=>app.company));
         const batch = await request('/messages',{query:{q:query,maxResults:PAGE,pageToken:state.pageToken}});

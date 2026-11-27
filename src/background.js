@@ -288,8 +288,10 @@ const handlers={
     await chrome.storage.local.set({gmailAccount:account});
     const previous=await settings();
     // A different mailbox starts a fresh cursor.
-    if(!previous.gmail||gmailAccount!==account) await db.runtime.delete('gmail-cursor');
-    await updateSettings({gmail:true,markRead:false});
+    const fresh=!previous.gmail||gmailAccount!==account;
+    if(fresh) await db.runtime.delete('gmail-cursor');
+    // Reading starts at connection time; reconnecting the same mailbox keeps its start.
+    await updateSettings({gmail:true,markRead:false,...(fresh||!previous.gmailSince?{gmailSince:nowISO()}:{})});
     void tick().catch(()=>{});
     return true;
   },
@@ -298,7 +300,7 @@ const handlers={
     const previous=await settings();
     try { await disconnectMail(!!message.revoke); }
     finally {
-      await updateSettings({gmail:false});
+      await updateSettings({gmail:false,gmailSince:null});
       await db.transaction('rw',db.runtime,db.events,async()=>{
         await db.runtime.bulkDelete(['gmail-cursor','health:gmail']);
         await db.events.filter(event=>event.pendingRead).modify({pendingRead:false});

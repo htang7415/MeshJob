@@ -80,7 +80,7 @@ In **Settings → Claude**, set a personal API key and a monthly budget (default
 
 ### Gmail
 
-Gmail access is read-only (`gmail.readonly`); MeshJob never changes your mailbox. Any Gmail account works, including one that is not the account signed in to Chrome: **Settings → Gmail → Connect Gmail** opens Google's account chooser. MeshJob renews access in the background and asks you to reconnect only when Google requires it. **Switch account** moves to another mailbox.
+Gmail access is read-only (`gmail.readonly`); MeshJob never changes your mailbox. Any Gmail account works, including one that is not the account signed in to Chrome: **Settings → Gmail → Connect Gmail** opens Google's account chooser. MeshJob renews access in the background and asks you to reconnect only when Google requires it. **Switch account** moves to another mailbox. MeshJob reads only mail received after you connect a mailbox; earlier mail is never read.
 
 If your build includes a shared MeshJob client, **Connect Gmail** is all you need. Otherwise choose **Set up Gmail** and create your own client once, with no rebuild needed:
 

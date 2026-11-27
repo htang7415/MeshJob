@@ -165,8 +165,9 @@ test('backup round-trip preserves linked history, job description, PDF, and stri
 });
 test('Gmail sync is read-only, idempotent for replayed history, and links the right account',async()=>{
   const {application}=await saveApplication(fixtureJob);
-  await updateSettings({gmail:true});
+  await updateSettings({gmail:true,gmailSince:new Date(Date.now()-3600_000).toISOString()});
   const examples={
+    old:{...fixtureMail,id:'old',threadId:'thread0',subject:'Interview invitation',at:new Date(Date.now()-7200_000).toISOString()},
     m1:{...fixtureMail,at:new Date().toISOString()},
     m2:{...fixtureMail,id:'m2',threadId:'thread2',subject:'CodeSignal assessment invitation',snippet:'Please complete by 2026-12-05 at 10:00 EST.',at:new Date().toISOString()},
     m3:{...fixtureMail,id:'m3',threadId:'thread3',subject:'Acme Health recruitment next steps',snippet:'Please respond about your application.',at:new Date().toISOString()}
@@ -187,7 +188,10 @@ test('Gmail sync is read-only, idempotent for replayed history, and links the ri
   const config=await settings();
   await syncMail({config,api,notify:()=>{notifies++;}});
   await syncMail({config,api,notify:()=>{notifies++;}});
-  assert.equal(reads,3);assert.equal(notifies,2);
+  // The mock replays the pre-connection message on both syncs; it is read for its date and ignored.
+  assert.equal(reads,5);assert.equal(notifies,2);
+  assert.equal(await db.events.get('gmail:old'),undefined,'mail from before the connection is ignored');
+  assert.ok(Number(/after:(\d+)/.exec(query)[1])*1000>=Date.now()-3600_000-1000);
   assert.match(query,/from:greenhouse\.io/);assert.match(query,/"Acme Health"/);assert.match(query,/-category:promotions/);
   assert.equal((await db.applications.get(application.id)).status,'Applied');
   const confirmation=await db.events.get('gmail:m1');

@@ -247,8 +247,8 @@ function gmail(config,health) {
   });
   const refresh=async()=>{
     const data=await rpc('integrations:status');
-    help.textContent=config.gmail?(data.gmailAccount||'Connected')+' · '+(health?.successAt?'last sync '+dateLabel(health.successAt):'waiting for first sync')+(health?.error?' · '+health.error:''):
-      'Read-only. Use any Gmail account, even one that differs from your Chrome account.';
+    help.textContent=config.gmail?(data.gmailAccount||'Connected')+' · reads mail since '+dateLabel(config.gmailSince)+' · '+(health?.successAt?'last sync '+dateLabel(health.successAt):'waiting for first sync')+(health?.error?' · '+health.error:''):
+      'Read-only. Use any Gmail account, even one that differs from your Chrome account. Only mail received after you connect is read.';
     status.replaceChildren(
       config.gmail?badge('Connected','ok'):data.gmailConfigured?button('Connect Gmail',connect,'primary small'):button('Set up Gmail',()=>gmailSetup(data,refresh),'primary small'),
       config.gmail&&button('Switch account',connect,'quiet small'));
