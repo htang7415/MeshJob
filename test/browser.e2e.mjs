@@ -639,7 +639,7 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
     await panel.getByText('Blue Yonder',{exact:true}).waitFor();
     metrics.panelSync.tabSwitchMs=performance.now()-syncStart;
     await panel.getByRole('button',{name:'Save to Tracker'}).click();
-    await panel.getByRole('button',{name:'Open in Full view'}).waitFor();
+    await panel.getByRole('button',{name:'Open in Dashboard'}).waitFor();
     assert.equal(await listing.url(),blueYonder+'/JDA_Careers/job/Dallas/Backend-Engineer_263328-1');
     const custom=await context.newPage();
     await custom.goto(databricks+'/company/careers/engineering/ai-engineer-8546367002');

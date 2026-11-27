@@ -324,7 +324,7 @@ function accessView() {
 function postingView() {
   const app=state.app??state.related;
   return [jobCard(app),
-    app?el('div',{class:'actions'},button('Open in Full view',task(()=>fullView('#tracker/'+app.id)),'wide')):
+    app?el('div',{class:'actions'},button('Open in Dashboard',task(()=>fullView('#tracker/'+app.id)),'wide')):
       button('Save to Tracker',task(async()=>{await ensureApp('Saved');render();toast('Saved to Tracker.');}),'primary wide'),
     submissionView(),learnView()];
 }
@@ -390,7 +390,7 @@ function formView() {
 const workspace=el('main',{class:'workspace panel stack'});
 root.append(el('header',{class:'app-header'},el('div',{class:'header-inner'},
   el('span',{class:'brand'},el('img',{alt:'',src:'icons/icon32.png'}),'MeshJob'),
-  button('Full view',task(()=>fullView(state.app?'#tracker/'+state.app.id:'')),'quiet small',{title:'Open MeshJob full view'}))),workspace);
+  button('Dashboard',task(()=>fullView(state.app?'#tracker/'+state.app.id:'')),'quiet small',{title:'Open the MeshJob Dashboard'}))),workspace);
 function render() {
   const current=mode();
   const content=current==='loading'?el('p',{role:'status',class:'subtle'},'Reading this page…'):

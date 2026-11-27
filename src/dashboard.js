@@ -256,21 +256,28 @@ function discover(data) {
     suggestedBoards(runtime.filter(row=>row.kind==='suggestion'&&!sources.some(source=>source.id===row.source?.id))),
     el('div',{id:'view-results'},discoverResults(data)));
 }
+// Workday sites need the user's confirmation that automated checks are allowed (spec 3.1); ask once for all of them.
+async function addBoards(rows) {
+  const add=async workdayOk=>{
+    const entries=rows.map(row=>({...row.source,...(row.source.provider==='workday'?{permitted:workdayOk}:{})}));
+    const count=await rpc('sources:add',{entries});
+    await db.runtime.bulkDelete(rows.map(row=>row.id));
+    toast(count===1?rows[0].source.name+' added.':count+' boards added.');
+  };
+  const workday=rows.filter(row=>row.source.provider==='workday');
+  if(!workday.length) return add(false);
+  formDialog('Confirm Workday sites',[
+    paragraph(workday.map(row=>row.source.name).join(', ')+' '+(workday.length===1?'uses':'use')+' Workday. Workday sites set their own rules for automated checks.'),
+    paragraph('Add them only if their career site terms allow it. MeshJob also follows each site\'s robots.txt and stops if it disallows checks.','meta')
+  ],()=>add(true),'Confirm and add');
+}
 function suggestedBoards(rows) {
   if(!rows.length) return null;
   rows=rows.sort((a,b)=>(b.count??0)-(a.count??0));
-  const addAll=task(async()=>{
-    await permit([...new Set(rows.map(row=>origin(row.source.endpoint)))]);
-    const count=await rpc('sources:add',{entries:rows.map(row=>row.source)});
-    await db.runtime.bulkDelete(rows.map(row=>row.id));toast(count+' boards added.');
-  });
-  return el('section',{class:'group',style:'margin-bottom:14px'},el('div',{class:'flex between'},el('h2',{},'Suggested boards'),button('Add all '+rows.length,addAll,'small')),
+  return el('section',{class:'group',style:'margin-bottom:14px'},el('div',{class:'flex between'},el('h2',{},'Suggested boards'),button('Add all '+rows.length,task(()=>addBoards(rows)),'small')),
     el('ul',{class:'inset'},rows.slice(0,8).map(row=>el('li',{},
     el('div',{class:'stack compact'},el('strong',{},row.source.name),el('small',{},row.source.provider+(row.count?' · '+row.count+' matching roles':row.title?' · hiring '+row.title:''))),
-    el('div',{class:'actions'},button('Add',task(async()=>{
-      await permit([origin(row.source.endpoint)]);
-      await rpc('sources:add',{entries:[row.source]});await db.runtime.delete(row.id);toast(row.source.name+' added.');
-    }),'primary small',{'aria-label':'Add '+row.source.name}),button('Dismiss',task(async()=>{
+    el('div',{class:'actions'},button('Add',task(()=>addBoards([row])),'primary small',{'aria-label':'Add '+row.source.name}),button('Dismiss',task(async()=>{
       await db.runtime.put({id:'dismissed:'+row.source.id,kind:'dismissed',expiresAt:Date.now()+60*86_400_000});await db.runtime.delete(row.id);
     }),'quiet small'))))));
 }

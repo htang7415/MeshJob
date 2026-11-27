@@ -39,7 +39,7 @@ const manifest={
   icons:{16:'icons/icon16.png',32:'icons/icon32.png',48:'icons/icon48.png',128:'icons/icon128.png'},
   background:{service_worker:'background.js'},side_panel:{default_path:'panel.html'},
   commands:{_execute_action:{suggested_key:{default:'Alt+Shift+M'},description:'Open MeshJob beside the page'},
-    'open-full-view':{suggested_key:{default:'Alt+Shift+F'},description:'Open MeshJob full view'}},
+    'open-full-view':{suggested_key:{default:'Alt+Shift+F'},description:'Open the MeshJob Dashboard'}},
   content_security_policy:{extension_pages:"script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"}
 };
 await writeFile(resolve(out,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');

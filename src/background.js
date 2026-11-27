@@ -25,7 +25,7 @@ async function dashboard(hash='') {
   if (!tab) return chrome.tabs.create({url:base+'dashboard.html'+hash});
   return chrome.tabs.update(tab.id,{active:true,...(hash?{url:base+'dashboard.html'+hash}:{})});
 }
-// The toolbar icon always opens the Side Panel (spec 2); Full view is one click away inside it.
+// The toolbar icon always opens the Side Panel (spec 2); the Dashboard is one click away inside it.
 chrome.action.onClicked.addListener(tab=>{
   const opened=chrome.sidePanel.open({windowId:tab.windowId});
   void chrome.runtime.sendMessage({type:'panel:access',tabId:tab.id,windowId:tab.windowId}).catch(()=>false);

@@ -6,11 +6,11 @@ MeshJob is a local-first Chrome extension for discovering jobs, preparing applic
 
 1. Download [MeshJob 1.1.0 (ZIP)](install/MeshJob-1.1.0.zip) and extract it to a permanent folder. Keep this folder in place while using the extension.
 2. In Chrome 120 or later, open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the extracted folder containing `manifest.json`.
-3. Pin MeshJob and click its toolbar icon. The Side Panel opens; choose **Full view** for the Dashboard. In **Discover**, choose **Set up discovery** to pick roles, recommended boards and access to job application sites.
+3. Pin MeshJob and click its toolbar icon. The Side Panel opens; choose **Dashboard** for the full app. In **Discover**, choose **Set up discovery** to pick roles, recommended boards and access to job application sites.
 4. Add your details, PDFs and answers in **Settings**. On an application page, click the toolbar icon and choose **Autofill**. Review the page and submit it yourself.
 5. Use **Tracker** to follow stages and actions. Pause or finish the search in **Settings → Job search**. Export a backup before uninstalling.
 
-The toolbar icon always opens the Side Panel (Alt+Shift+M); Alt+Shift+F opens Full view. The icon shows a blue dot on application pages. The Side Panel follows the active tab and shows one of four views: your queue and new jobs on other pages, a job card on postings, the autofill view on forms, or a request for access. MeshJob can read Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable pages from installation, so job pages and forms appear without an access step; on other sites choose **Allow on this site**. For employer sign-up forms, preset a registration email and password in **Settings → Registration**; **Fill sign-up details** in the Side Panel fills them, you submit, and Chrome Password Manager saves the account.
+The toolbar icon always opens the Side Panel (Alt+Shift+M); Alt+Shift+F opens Dashboard. The icon shows a blue dot on application pages. The Side Panel follows the active tab and shows one of four views: your queue and new jobs on other pages, a job card on postings, the autofill view on forms, or a request for access. MeshJob can read Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable pages from installation, so job pages and forms appear without an access step; on other sites choose **Allow on this site**. For employer sign-up forms, preset a registration email and password in **Settings → Registration**; **Fill sign-up details** in the Side Panel fills them, you submit, and Chrome Password Manager saves the account.
 
 ### Update an existing installation
 
@@ -72,7 +72,7 @@ The bundled catalog includes 31 public employer boards across Greenhouse, Ashby,
 
 - **Aggregated lists**: the SimplifyJobs New Grad and Internships lists each cover 1,000+ employers in one request, with listing dates and sponsorship notes. Jobs listed inside your window appear as Newly detected.
 - **Startups**: the Hacker News "Who is hiring?" list reads the current monthly thread (a few hundred startups, most hiring through Ashby, Greenhouse or Lever) and is added with the recommended sources.
-- **Suggested boards**: Discover suggests the employers in those lists, the Hacker News thread and the daily Claude search that hire for your titles. Add one or all of them to monitor every role directly.
+- **Suggested boards**: Discover suggests the employers in those lists, the Hacker News thread and the daily Claude search that hire for your titles. Add one or all of them to monitor every role directly. Workday sites ask for one confirmation that their terms allow automated checks.
 - **Add companies**: in **Manage sources → Add companies**, type company names; MeshJob finds each public Ashby, Greenhouse, Lever, SmartRecruiters or Workable board. Careers pages and Workday sites can be added by URL.
 
 We Work Remotely RSS and the SpeedyApply new-grad lists are also optional. Public Careers pages are supported when they expose readable JobPosting data. Workday monitoring needs both Chrome origin access and terms that permit automated checks for the particular tenant.
