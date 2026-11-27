@@ -68,7 +68,13 @@ Set `MESHJOB_NATIVE_CHROME=1` and `MESHJOB_BROWSER` to the installed Chrome exec
 
 ## Sources and freshness
 
-The bundled catalog includes 31 public employer boards across Greenhouse, Ashby, and Lever. SmartRecruiters and Workable boards can be added by URL, including their job descriptions for matching. We Work Remotely RSS and three public GitHub new-grad lists are optional. Public Careers pages are supported when they expose readable JobPosting data. Workday monitoring needs both Chrome origin access and terms that permit automated checks for the particular tenant.
+The bundled catalog includes 31 public employer boards across Greenhouse, Ashby, and Lever, plus optional lists. Coverage grows beyond it in three ways:
+
+- **Aggregated lists**: the SimplifyJobs New Grad and Internships lists each cover 1,000+ employers in one request, with listing dates and sponsorship notes. Jobs listed inside your window appear as Newly detected.
+- **Suggested boards**: Discover suggests the employers in those lists (and from the daily Claude search) that hire for your titles. Add one or all of them to monitor every role directly.
+- **Add companies**: in **Manage sources → Add companies**, type company names; MeshJob finds each public Ashby, Greenhouse, Lever, SmartRecruiters or Workable board. Careers pages and Workday sites can be added by URL.
+
+We Work Remotely RSS and the SpeedyApply new-grad lists are also optional. Public Careers pages are supported when they expose readable JobPosting data. Workday monitoring needs both Chrome origin access and terms that permit automated checks for the particular tenant.
 
 Sources are checked every 10 minutes while Chrome is running and search is Active. Workday reads only its newest pages between complete snapshots every six hours. Discover shows **New** jobs (an original posting time inside your window) and **Newly detected** jobs (absent from the previous complete check). Any earlier evidence hides a job as older: Greenhouse `first_published`, Lever `createdAt`, Ashby `publishedAt`, SmartRecruiters `releasedDate`, Workday and Workable age labels, or MeshJob having seen it before the window. A newly added board therefore adds none of its backlog. Same-role relistings are treated as reposts. Undated jobs appear only with **Include jobs without a posting date**. [Greenhouse](https://docs.greenhouse.io/job-board.html), [Ashby](https://developers.ashbyhq.com/docs/public-job-posting-api), [Lever](https://github.com/lever/postings-api), [We Work Remotely RSS](https://weworkremotely.com/remote-job-rss-feed)
 

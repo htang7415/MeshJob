@@ -3,7 +3,7 @@ import { discoveryRank, candidateDetails, monitorSource, retainRecords, sourceFa
 import { canonicalUrl, freshness, localSlot, nowISO, preferenceDecision, publicUrl, uid } from './domain.js';
 import { evaluateCandidate, getClaudePermission, newClaude } from './intelligence.js';
 import { syncMail } from './mail.js';
-import { collect, detectSource, fetchPublic, postingIdentity, respectWorkdayRobots } from './sources.js';
+import { boardCandidates, collect, detectSource, fetchPublic, postingIdentity, respectWorkdayRobots } from './sources.js';
 import { findJob } from './tracker.js';
 
 const ALARM = 'meshjob-schedule';
@@ -146,6 +146,54 @@ async function queueCandidates(rows,source,config,generation) {
   });
 }
 
+// Aggregated lists reveal which employers hire for the user's roles; suggest their boards (Discover → Suggested boards).
+const BOARD_PROVIDERS=new Set(['greenhouse','ashby','lever','smartrecruiters','workable']);
+export async function suggestBoards(rows,config,generation) {
+  if(!config.preferences.titles.length) return;
+  const counts=new Map();
+  for(const {job} of rows) {
+    const identity=postingIdentity(job.url);
+    if(!identity||!BOARD_PROVIDERS.has(identity.source.provider)||!preferenceDecision(job,config.preferences).eligible) continue;
+    const entry=counts.get(identity.source.id)??{source:{...identity.source,name:job.company||identity.source.name},title:job.title,count:0};
+    entry.count++;counts.set(identity.source.id,entry);
+  }
+  const top=[...counts.values()].sort((a,b)=>b.count-a.count).slice(0,40);
+  await guarded(generation,[db.runtime,db.sources],async()=>{
+    let added=0;
+    for(const entry of top) {
+      if(added>=12) break;
+      const id=entry.source.id;
+      if(await db.sources.get(id)||await db.runtime.get('dismissed:'+id)) continue;
+      await db.runtime.put({id:'suggest:'+id,kind:'suggestion',source:entry.source,title:entry.title,count:entry.count,expiresAt:Date.now()+14*86_400_000});
+      added++;
+    }
+  });
+}
+// Resolve company names to public ATS boards by trying their usual board names.
+export async function resolveBoards(names,op) {
+  const run=cancellationSignal(op,null);
+  try {
+    const queue=[...new Set(names.map(name=>String(name).trim()).filter(Boolean))].slice(0,40);
+    const results=[];
+    await Promise.all(Array.from({length:4},async()=>{
+      while(queue.length) {
+        const name=queue.shift();
+        let found=null;
+        for(const url of boardCandidates(name)) {
+          run.signal.throwIfAborted();
+          const source=detectSource(url);
+          if(await db.sources.get(source.id)) {found={...source,existing:true};break;}
+          try {
+            const listing=await collect(source,{fetcher:scopedFetch(null,run.signal,source.origin),signal:run.signal});
+            if(listing.items?.length) {found={...source,name,count:listing.items.length};break;}
+          } catch(error) { if(run.signal.aborted) throw error; }
+        }
+        results.push({name,source:found});
+      }
+    }));
+    return results.sort((a,b)=>names.indexOf(a.name)-names.indexOf(b.name));
+  } finally { run.done(); }
+}
 async function candidateBatch(config,generation,onlySource) {
   const id='run:candidates';
   const lease=await claim(id,'lease',90_000,generation);
@@ -210,7 +258,11 @@ export async function runSource(id,{generation,op,full=false}={}) {
     try {
       await respectWorkdayRobots(source,fetcher,run.signal);
       const result=await monitorSource(source,{generation,signal:run.signal,fetcher,full,
-        onCandidates:async rows=>queueCandidates(rows,source,await settings(),generation)});
+        onCandidates:async rows=>{
+          const latest=await settings();
+          await queueCandidates(rows,source,latest,generation);
+          if(source.provider==='github') await suggestBoards(rows,latest,generation);
+        }});
       if(generation==null) await candidateBatch(await settings(),generation,source.id);
       return result;
     } catch(error) {
@@ -375,7 +427,7 @@ export async function tick() {
     const now = Date.now();
     await observeMissedSlots(config,generation,now);
     const ready = (await db.sources.filter(source=>source.enabled && (!source.nextAt || source.nextAt<=now)).toArray())
-      .sort((a,b)=>(a.nextAt??0)-(b.nextAt??0)).slice(0,5);
+      .sort((a,b)=>(a.nextAt??0)-(b.nextAt??0)).slice(0,12);
     const mailHealth = await db.runtime.get('health:gmail');
     const today = localSlot(new Date(),config.slots);
     const mail = config.gmail && (!mailHealth?.nextAt || mailHealth.nextAt<=now) ?
@@ -385,7 +437,7 @@ export async function tick() {
         if (!await claudeFor(config,generation)) return {skipped:'Claude is disabled'};
         return searchNow({generation});
       },generation,300_000) : null;
-    const sourceRuns = Promise.all(Array.from({length:3},async()=>{
+    const sourceRuns = Promise.all(Array.from({length:4},async()=>{
       while (ready.length) {
         const source = ready.shift();
         try { await runSource(source.id,{generation}); } catch { /* Source health is durable. */ }

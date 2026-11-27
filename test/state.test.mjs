@@ -74,6 +74,17 @@ test('applications record level, source and the exact resume version they used',
   assert.equal((await db.materials.get(item.id)).revision,2);
   assert.equal(versionLabel({label:'ML resume',revision:1}),'ML resume · v1');
 });
+test('aggregated lists suggest boards hiring for the target roles, minus dismissed ones',async()=>{
+  const {suggestBoards}=await import('../src/service.js');
+  const config=await updateSettings(current=>({...current,preferences:{...current.preferences,titles:['Software Engineer']}}));
+  const job=(url,title,company)=>({job:{url,title,company}});
+  const uuid=n=>'13e1e478-6330-47c5-9fb0-d07889111c'+String(n).padStart(2,'0');
+  await db.runtime.put({id:'dismissed:'+detectSource('https://jobs.lever.co/nope').id,kind:'dismissed',expiresAt:Date.now()+1e9});
+  await suggestBoards([job('https://jobs.ashbyhq.com/rillet/'+uuid(1),'Software Engineer','Rillet'),job('https://jobs.ashbyhq.com/rillet/'+uuid(2),'Backend Software Engineer','Rillet'),
+    job('https://jobs.lever.co/nope/'+uuid(3),'Software Engineer','Nope'),job('https://job-boards.greenhouse.io/acme/jobs/9','Accountant','Acme')],config,0);
+  const rows=await db.runtime.where('kind').equals('suggestion').toArray();
+  assert.deepEqual(rows.map(row=>[row.source.provider,row.source.name,row.count]),[['ashby','Rillet',2]]);
+});
 test('manual tracking changes survive backups and deletion retains the job and mail deduplication',async()=>{
   const {application}=await saveApplication(fixtureJob,{stage:'Preparing'});
   const applicationId=application.id;

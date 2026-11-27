@@ -64,7 +64,7 @@ export function detectSource(value, hint = '') {
     provider = 'github'; tenant = parts.slice(0,2).join('/');
     const branch = hostname.startsWith('raw.') ? parts[2] : parts[2] === 'blob' ? parts[3] : 'HEAD';
     const file = (hostname.startsWith('raw.') ? parts.slice(3) : parts.slice(4)).join('/') || 'README.md';
-    if (!branch || !pathToken.test(branch) || !/^[\w./% -]+\.md$/i.test(file) || file.split('/').includes('..')) throw new Error('Select a Markdown list on a branch without slash characters.');
+    if (!branch || !pathToken.test(branch) || !/^[\w./% -]+\.(?:md|json)$/i.test(file) || file.split('/').includes('..')) throw new Error('Select a Markdown or JSON job list on a branch without slash characters.');
     site = branch + '/' + file;
     endpoint = 'https://raw.githubusercontent.com/' + tenant + '/' + site;
   } else {
@@ -340,6 +340,23 @@ function githubRows(data) {
   if (!results.length) throw new SourceError('No supported job rows in this Markdown list.');
   return results;
 }
+// Aggregated JSON lists (SimplifyJobs listings.json): thousands of employers in one request.
+const SPONSORSHIP={'Offers Sponsorship':'Likely','Does Not Offer Sponsorship':'Not Supported','U.S. Citizenship is Required':'Not Supported'};
+export function listingRows(data, source) {
+  let rows;
+  try { rows=JSON.parse(data); } catch { throw new SourceError('The JSON job list could not be read.'); }
+  if (!Array.isArray(rows)) throw new SourceError('The JSON job list has an unsupported layout.');
+  return rows.filter(row=>row&&row.active!==false&&row.is_visible!==false&&typeof row.url==='string'&&row.title&&row.company_name).flatMap(row=>{
+    const url=absolute(row.url,'https://github.com/');
+    if (!url) return [];
+    const places=Array.isArray(row.locations)?row.locations:[...String(row.locations??'').matchAll(/'([^']+)'|"([^"]+)"/g)].map(match=>match[1]??match[2]);
+    const listed=Number(row.date_posted)>0?new Date(Number(row.date_posted)*1000).toISOString():null;
+    const status=SPONSORSHIP[row.sponsorship];
+    return [{url,title:trim(row.title),company:trim(row.company_name),location:places.map(trim).filter(Boolean).join(' · '),official:false,
+      attribution:source.name,listedAt:listed&&Date.parse(listed)<=Date.now()?listed:null,ageFloor:listed&&Date.parse(listed)<=Date.now()?listed:null,
+      ...(status?{sponsorship:{status,items:[{status,scope:'visa sponsorship',text:source.name+' lists: '+row.sponsorship,url}]}}:{})}];
+  });
+}
 function feedRows(data, source) {
   const doc = parseDocument(data,{xmlMode:true});
   const root = doc.children.find(node => ['rss','feed','rdf:RDF'].includes(node.name));
@@ -401,7 +418,7 @@ export async function collect(source, { fetcher = fetchPublic, signal, full = fa
       salary:job.salaryRange ? {min:job.salaryRange.min,max:job.salaryRange.max,currency:job.salaryRange.currency,period:period(job.salaryRange.interval)} : undefined }));
   } else {
     const data = await limited(response);
-    items = source.provider === 'github' ? githubRows(data) : source.provider === 'rss' ? feedRows(data,source) : jsonPostings(data,source.url);
+    items = source.provider === 'github' ? (/\.json$/i.test(source.site) ? listingRows(data,source) : githubRows(data)) : source.provider === 'rss' ? feedRows(data,source) : jsonPostings(data,source.url);
     if (source.provider === 'careers' && !items.length) {
       const doc = parseDocument(data);
       const feed = tags(doc,'link').find(node => /^(application\/(rss|atom)\+xml)$/.test(node.attribs.type ?? ''));
@@ -471,3 +488,13 @@ export async function jobDetails(item, source, fetcher, signal) {
   }
   return item;
 }
+
+// Find a company's public ATS board from its name (Settings → Sources → Add companies).
+export function boardCandidates(name) {
+  const words=String(name??'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/&/g,' and ').replace(/[^\w\s-]/g,' ').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const slugs=[...new Set([words.join('').toLowerCase(),words.join('-').toLowerCase(),words.join('')])].filter(slug=>pathToken.test(slug));
+  const hosts=['https://jobs.ashbyhq.com/','https://job-boards.greenhouse.io/','https://jobs.lever.co/','https://jobs.smartrecruiters.com/','https://apply.workable.com/'];
+  return hosts.flatMap(host=>slugs.filter(slug=>host.includes('smartrecruiters')||slug===slug.toLowerCase()).map(slug=>host+slug));
+}
+export const BOARD_API_ORIGINS=['https://api.ashbyhq.com/*','https://boards-api.greenhouse.io/*','https://api.lever.co/*','https://api.smartrecruiters.com/*','https://apply.workable.com/*'];

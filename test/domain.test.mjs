@@ -312,3 +312,25 @@ test('SmartRecruiters and Workable boards list complete snapshots with dates',as
   });
   assert.equal(detail.jd,'Build APIs.\n3+ years of experience');
 });
+
+test('aggregated JSON lists cover many employers with listed dates and sponsorship',async()=>{
+  const {boardCandidates}=await import('../src/sources.js');
+  const src={...detectSource('https://github.com/SimplifyJobs/New-Grad-Positions/blob/dev/.github/scripts/listings.json'),name:'SimplifyJobs New Grad'};
+  assert.equal(src.endpoint,'https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/.github/scripts/listings.json');
+  const now=Math.floor(Date.now()/1000);
+  const body=JSON.stringify([
+    {company_name:'Rillet',title:'Software Engineer, New Grad',url:'https://jobs.ashbyhq.com/rillet/13e1e478-6330-47c5-9fb0-d07889111cc2',locations:"['San Francisco, CA', 'NYC']",date_posted:now-3600,active:true,is_visible:true,sponsorship:'Offers Sponsorship'},
+    {company_name:'Old Co',title:'Software Engineer',url:'https://job-boards.greenhouse.io/oldco/jobs/77',locations:['Austin, TX'],date_posted:now-40*86400,active:true,sponsorship:'U.S. Citizenship is Required'},
+    {company_name:'Closed Co',title:'Engineer',url:'https://jobs.lever.co/closed/13e1e478-6330-47c5-9fb0-d07889111cc3',active:false}
+  ]);
+  const {items}=await collect(src,{fetcher:async()=>new Response(body)});
+  assert.equal(items.length,2);
+  assert.equal(items[0].location,'San Francisco, CA · NYC');assert.equal(items[0].sponsorship.status,'Likely');assert.equal(items[0].official,false);
+  assert.equal(freshness({...items[0],active:true,firstSeenAt:new Date().toISOString()},24),'detected');
+  assert.equal(freshness({...items[1],active:true,firstSeenAt:new Date().toISOString()},24),'older');
+  assert.equal(items[1].sponsorship.status,'Not Supported');
+  assert.ok(!preferenceDecision(items[1],{titles:['Software Engineer'],sponsorship:'Required'}).eligible);
+  const urls=boardCandidates('Scale AI');
+  assert.ok(urls.includes('https://jobs.ashbyhq.com/scaleai')&&urls.includes('https://job-boards.greenhouse.io/scale-ai')&&urls.includes('https://jobs.smartrecruiters.com/ScaleAI'));
+  assert.deepEqual(boardCandidates('  '),[]);
+});

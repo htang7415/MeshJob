@@ -89,7 +89,8 @@ export function freshness(job, hours = 24, at = Date.now()) {
   if (job.active && job.official && exactDate(job.postedAt)) return Date.parse(job.postedAt) >= floor ? 'verified' : 'older';
   if (validDate(job.ageFloor) && Date.parse(job.ageFloor) < floor) return 'older';
   if (validDate(job.firstSeenAt) && Date.parse(job.firstSeenAt) < floor) return 'older';
-  if (job.active && !job.reopenedAt && job.lastAbsentAt) return 'detected';
+  // Absent from the previous complete check, or listed inside the window by an aggregated list.
+  if (job.active && !job.reopenedAt && (job.lastAbsentAt || validDate(job.listedAt) && Date.parse(job.listedAt) >= floor)) return 'detected';
   return 'unknown';
 }
 export const earliest = (...values) => values.filter(validDate).sort((a,b)=>Date.parse(a)-Date.parse(b))[0] ?? null;

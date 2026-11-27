@@ -1,7 +1,7 @@
 import { liveQuery } from 'dexie';
 import { db, settings } from './db.js';
 import { ATS_ORIGINS, distinctValues, freshness, httpUrl, JOB_DESCRIPTION_LIMIT, normalized, preferenceDecision, STAGES, uid } from './domain.js';
-import { detectSource } from './sources.js';
+import { BOARD_API_ORIGINS, detectSource } from './sources.js';
 import { analyze, statsPeriod } from './stats.js';
 import { changeStage, deleteApplication, saveApplication, SOURCE_CHOICES, undoEvent } from './tracker.js';
 import { applicationCSV, csvPreview, eventsCSV, importApplicationCSV, jobsCSV, makeBackup, readSources, sourcePack, sourcesCSV } from './portability.js';
@@ -262,12 +262,21 @@ function discover(data) {
 }
 function suggestedBoards(rows) {
   if(!rows.length) return null;
-  return el('section',{class:'group',style:'margin-bottom:14px'},el('h2',{},'Suggested boards'),el('ul',{class:'inset'},rows.slice(0,8).map(row=>el('li',{},
-    el('div',{class:'stack compact'},el('strong',{},row.source.name),el('small',{},row.source.provider+(row.title?' · hiring '+row.title:''))),
+  rows=rows.sort((a,b)=>(b.count??0)-(a.count??0));
+  const addAll=task(async()=>{
+    await permit([...new Set(rows.map(row=>origin(row.source.endpoint)))]);
+    const count=await rpc('sources:add',{entries:rows.map(row=>row.source)});
+    await db.runtime.bulkDelete(rows.map(row=>row.id));toast(count+' boards added.');
+  });
+  return el('section',{class:'group',style:'margin-bottom:14px'},el('div',{class:'flex between'},el('h2',{},'Suggested boards'),button('Add all '+rows.length,addAll,'small')),
+    el('ul',{class:'inset'},rows.slice(0,8).map(row=>el('li',{},
+    el('div',{class:'stack compact'},el('strong',{},row.source.name),el('small',{},row.source.provider+(row.count?' · '+row.count+' matching roles':row.title?' · hiring '+row.title:''))),
     el('div',{class:'actions'},button('Add',task(async()=>{
       await permit([origin(row.source.endpoint)]);
       await rpc('sources:add',{entries:[row.source]});await db.runtime.delete(row.id);toast(row.source.name+' added.');
-    }),'primary small',{'aria-label':'Add '+row.source.name}),button('Dismiss',task(()=>db.runtime.delete(row.id)),'quiet small'))))));
+    }),'primary small',{'aria-label':'Add '+row.source.name}),button('Dismiss',task(async()=>{
+      await db.runtime.put({id:'dismissed:'+row.source.id,kind:'dismissed',expiresAt:Date.now()+60*86_400_000});await db.runtime.delete(row.id);
+    }),'quiet small'))))));
 }
 root.addEventListener('change',event=>{
   const target=event.target;
@@ -372,7 +381,7 @@ function sourceDialog(data) {
   let current=data.sources;
   const rows=el('div',{},sourceRows(current));
   const {dialog}=formDialog('Sources',[
-    el('div',{class:'actions'},button('Add or test URL',()=>{dialog.close();urlSource();},'primary'),
+    el('div',{class:'actions'},button('Add companies',()=>{dialog.close();companySources();},'primary'),button('Add or test URL',()=>{dialog.close();urlSource();}),
       button('Browse catalog',()=>{dialog.close();catalogDialog();}),
       menu('Import and export',[button('Import source pack',()=>{dialog.close();sourceImport();}),
         button('Export CSV',()=>download('meshjob-sources.csv',sourcesCSV(current))),
@@ -399,6 +408,27 @@ function sourceRows(sources) {
       el('div',{class:'actions'},button('Settings',edit,'small'),row.enabled&&button('Check now',()=>runDialog('Check '+row.name,'sources:refresh',{id:row.id,full:true},result=>result.errors[0]?.error||(result.checked?'Check completed.':'Check already in progress.')),'small'),
         button('Remove',()=>formDialog('Remove source',[paragraph('The source stops checking. Tracked applications remain.')],async()=>{await rpc('sources:edit',{id:row.id,remove:true});toast('Source removed.');},'Remove source'),'danger small')));
   }));
+}
+// Type company names; MeshJob finds their public Ashby, Greenhouse, Lever, SmartRecruiters or Workable boards.
+function companySources() {
+  const names=textarea('names','',{rows:8,placeholder:'Rillet\nAnthropic\nFigma'});
+  const results=el('div',{class:'stack'});
+  const {dialog}=formDialog('Add companies',[
+    field('Company names, one per line',names),results
+  ],async ()=>{
+    const list=names.value.split(/\n|,/).map(value=>value.trim()).filter(Boolean);
+    if(!list.length) throw new Error('Enter at least one company name.');
+    await permit(BOARD_API_ORIGINS);
+    results.replaceChildren(paragraph('Looking up '+list.length+' companies…'));
+    const rows=await rpc('sources:resolve',{names:list,op:uid()});
+    const found=rows.filter(row=>row.source&&!row.source.existing);
+    results.replaceChildren(el('ul',{class:'inset'},rows.map(row=>el('li',{},el('span',{},row.name),
+      el('small',{},row.source?row.source.existing?'Already added':row.source.provider+' · '+row.source.count+' jobs':'No public board found · add its careers URL')))),
+      found.length>0&&button('Add '+found.length+' boards',task(async()=>{
+        const count=await rpc('sources:add',{entries:found.map(row=>row.source)});dialog.close();toast(count+' boards added.');
+      }),'primary'));
+    return false;
+  },'Find boards');
 }
 function urlSource() {
   const url=input('url','',{type:'url',required:true,placeholder:'https://…'});

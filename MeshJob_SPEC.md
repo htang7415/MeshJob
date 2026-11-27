@@ -72,7 +72,7 @@ Separate persistent discovery preferences from temporary view filters. Explicit 
 | Workday | Permitted public careers-page interface; tenant/site | New-job check (first 1–2 pages, newest first) every 10 min; full pagination snapshot every 6 h for closures |
 | SmartRecruiters / Workable | Public postings APIs; job descriptions from each job's public detail endpoint | 10 min |
 | Careers/RSS | RSS/Atom, public JobPosting JSON-LD or supported listing parser | 10 min where permitted |
-| GitHub lists | Public Markdown/list and conditional requests, supported layouts; used mainly to discover employer boards | 10 min subject to rate limits |
+| GitHub lists | Public Markdown lists and aggregated JSON lists (SimplifyJobs `listings.json`: 1,000+ employers per request, listed date, sponsorship); conditional requests | 10 min (Markdown), 30 min (JSON) |
 | Claude Web Search | Preference-directed queries restricted to ATS domains; finds employer boards | Once daily (default 09:00 local) plus manual Search now |
 | User import | Current job/application tab or pasted URL, manual fallback | On demand |
 | Email | Gmail or Outlook incremental sync, manual Add email (section 7) | 5 min |
@@ -89,6 +89,8 @@ Ship a versioned, editable local catalog of verified public company boards and s
 - https://github.com/SimplifyJobs/New-Grad-Positions
 - https://github.com/speedyapply/2027-SWE-College-Jobs/blob/main/NEW_GRAD_USA.md
 - https://github.com/speedyapply/2027-AI-College-Jobs/blob/main/NEW_GRAD_USA.md
+
+**Coverage beyond the catalog (1.1).** A bundled catalog cannot list every employer, so coverage grows three ways without a server: (1) aggregated JSON lists cover thousands of employers in one request and show jobs listed inside the window as Newly detected; (2) MeshJob counts which employers in those lists hire for the user's titles and offers the top ones as **Suggested boards** (add one or all; dismissed suggestions stay hidden for 60 days), as does the daily AI search; (3) **Add companies** takes company names and finds each public Ashby, Greenhouse, Lever, SmartRecruiters or Workable board by trying its usual board names. Careers URLs and Workday sites remain addable by URL. The scheduler checks up to 12 due sources per 30-second tick with four in parallel.
 
 Include YC/other public sources where permitted and supported; otherwise discover via AI or user import. Do not crawl LinkedIn, Jobright or Simplify private/restricted databases. External links discovered by users or AI are valid leads. Catalog is packaged, not fetched from MeshJob GitHub at runtime. Do not claim catalog completeness; document validated source count and supported ATS.
 

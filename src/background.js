@@ -8,7 +8,7 @@ import { candidateDetails } from './discovery.js';
 import { evaluateCandidate, matchPreferences, relevantFacts } from './intelligence.js';
 import { collect, detectSource, jsonPostings, plain, postingIdentity } from './sources.js';
 import {
-  addSources, arm, cancelOperation, claudeFor, notifyUrgent, pattern, previewSource, recordManualRun, registerSchedules, runSource,
+  addSources, arm, cancelOperation, claudeFor, notifyUrgent, pattern, previewSource, recordManualRun, registerSchedules, resolveBoards, runSource,
   scopedFetch, setMode, stopMail, stopSource, testNotification, tick
 } from './service.js';
 import { actionState, appendEvent, expiryEvidence, saveApplication, sourceFromReferrer } from './tracker.js';
@@ -222,6 +222,7 @@ const handlers={
   'sources:catalog':()=>CATALOG,
   'sources:add':message=>addSources(message.entries),
   'sources:test':message=>previewSource(message.source,message.op),
+  'sources:resolve':message=>resolveBoards(Array.isArray(message.names)?message.names:[],message.op),
   'sources:refresh':async message=>{
     const ids=message.id?[message.id]:(await db.sources.filter(source=>source.enabled).toArray()).sort((a,b)=>(a.nextAt??0)-(b.nextAt??0)).map(source=>source.id);
     let checked=0;const errors=[];

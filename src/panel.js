@@ -1,6 +1,6 @@
 import { liveQuery } from 'dexie';
 import { db, settings } from './db.js';
-import { canonicalUrl, freshness, httpUrl, levelOf, normalized, preferenceDecision, workdayTenant } from './domain.js';
+import { ATS_ORIGINS, canonicalUrl, freshness, httpUrl, levelOf, normalized, preferenceDecision, workdayTenant } from './domain.js';
 import { createFillPlan, fieldQuestion, registrationEmailField } from './form-rules.js';
 import { currentMaterials, versionLabel } from './materials.js';
 import { LEVELS } from './preferences.js';
@@ -109,11 +109,15 @@ function chooseDefaults(job) {
     state.selected[type]=[used,matchId,state.config[key],type==='resume'?options[0]?.id:''].find(id=>id&&options.some(row=>row.id===id))??'';
   }
 }
+async function refreshStatus() {
+  const status=await rpc('integrations:status').catch(()=>({}));
+  state.claude=!!status.claude;state.atsAccess=!!status.atsAccess;
+}
 async function initialize() {
   let window;
   [state.config,state.materials,state.answers,window]=await Promise.all([settings(),db.materials.toArray(),db.answers.toArray(),chrome.windows.getCurrent()]);
   state.materials=currentMaterials(state.materials);
-  state.claude=await rpc('integrations:status').then(status=>status.claude).catch(()=>false);
+  await refreshStatus();
   panelWindow=window.id;
   chooseDefaults();
   await scan();
@@ -305,8 +309,12 @@ function homeView() {
   return [...sections,!sections.length&&paragraph('Open a job page. MeshJob fills the application and tracks it here.','empty-line')];
 }
 function accessView() {
-  // Without host access Chrome hides the URL; clicking the toolbar icon grants this tab temporarily.
-  if(!state.tab?.url) return [el('section',{class:'group'},paragraph('Click the MeshJob toolbar icon to read this page.','empty-line')),...homeView().filter(node=>node.tagName==='SECTION')];
+  // Without host access Chrome hides the URL. One grant covers every supported ATS; elsewhere the toolbar icon grants this tab.
+  if(!state.tab?.url) return [el('section',{class:'group'},
+    !state.atsAccess&&el('div',{class:'stack compact'},el('h1',{},'Read job pages automatically'),
+      paragraph('Allow MeshJob on Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable. The panel then follows job pages and forms without extra clicks.','subtle'),
+      button('Allow on job sites',task(async()=>{await permit(ATS_ORIGINS);await refreshStatus();await scan();}),'primary wide')),
+    paragraph(state.atsAccess?'Click the MeshJob toolbar icon to read this page.':'On other sites, click the MeshJob toolbar icon.','empty-line'))];
   return [el('section',{class:'group'},paragraph('MeshJob needs access to read this page.','empty-line'),
     button('Allow on this site',task(async()=>{
       const current=httpUrl(state.tab?.url);
@@ -435,7 +443,7 @@ chrome.tabs.onUpdated.addListener((id,change,tab)=>{
 chrome.tabs.onReplaced.addListener((added,removed)=>{
   if(removed===activeTab) {pageTransition(added);scheduleScan();}
 });
-chrome.permissions.onAdded.addListener(scheduleScan);
+chrome.permissions.onAdded.addListener(()=>{void refreshStatus().then(scheduleScan);});
 chrome.permissions.onRemoved.addListener(scheduleScan);
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   if(message?.type!=='panel:access'||sender.id!==chrome.runtime.id||message.windowId!==panelWindow) return false;
