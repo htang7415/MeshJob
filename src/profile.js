@@ -222,23 +222,50 @@ function claude(config,usage) {
     toggle('dailySearch','Daily web search',config.dailySearch,'Looks for new employers once a day.')),
     el('details',{class:'more'},el('summary',{},'Advanced'),el('ul',{class:'settings-list'},row('Model',model,'Pricing checked '+PRICE_VERSION+'.')))];
 }
+function copyable(value,label) {
+  return el('span',{class:'actions'},el('code',{class:'copy'},value),button('Copy',task(async()=>{await navigator.clipboard.writeText(value);},'Copied.'),'quiet small',{'aria-label':'Copy '+label}));
+}
+// Any Google account works; if the build ships no OAuth client, the user adds their own once (no rebuild).
+function gmailSetup(status,done) {
+  formDialog('Set up Gmail',[
+    paragraph('This build has no shared Google client. Create your own once; it takes about five minutes and works for any Gmail account.'),
+    el('ol',{class:'steps'},
+      el('li',{},'In Google Cloud Console, create a project and enable the Gmail API.'),
+      el('li',{},'Under OAuth consent screen, choose External, add the gmail.readonly scope, and publish the app. In Testing mode, Google ends access after 7 days.'),
+      el('li',{},'Create credentials → OAuth client ID → Web application, and add this authorized redirect URI:',copyable(status.gmailRedirect,'redirect URI')),
+      el('li',{},'Paste the client ID below.')),
+    field('Google OAuth client ID',input('clientId',status.gmailClientId,{required:true,placeholder:'1234-abc.apps.googleusercontent.com'}))
+  ],async ({clientId})=>{await rpc('gmail:client',{clientId});toast('Google client saved.');done?.();},'Save');
+}
 function gmail(config,health) {
-  const status=el('span',{});
-  const refresh=async()=>{
-    const data=await rpc('integrations:status');
-    status.replaceChildren(config.gmail?badge('Connected','ok'):data.gmailConfigured?button('Connect Gmail',connect,'primary small'):badge('Not available in this build'));
-  };
+  const status=el('span',{class:'actions'});
+  const help=el('small',{});
+  const advanced=el('ul',{class:'settings-list'});
   const connect=task(async()=>{
     await permit(MAIL_ORIGINS,['identity']);
-    await rpc('gmail:connect');toast('Gmail connected. MeshJob reads recruiting mail only.');
+    await rpc('gmail:connect');toast('Gmail connected. MeshJob reads recruiting mail only.');void refresh();
   });
+  const refresh=async()=>{
+    const data=await rpc('integrations:status');
+    help.textContent=config.gmail?(data.gmailAccount||'Connected')+' · '+(health?.successAt?'last sync '+dateLabel(health.successAt):'waiting for first sync')+(health?.error?' · '+health.error:''):
+      'Read-only. Use any Gmail account, even one that differs from your Chrome account.';
+    status.replaceChildren(
+      config.gmail?badge('Connected','ok'):data.gmailConfigured?button('Connect Gmail',connect,'primary small'):button('Set up Gmail',()=>gmailSetup(data,refresh),'primary small'),
+      config.gmail&&button('Switch account',connect,'quiet small'));
+    advanced.replaceChildren(
+      el('li',{},el('div',{class:'label'},el('span',{},'Google OAuth client'),el('small',{},data.gmailClientId?'Using your own client.':data.gmailShipped?'Using the MeshJob client.':'No client yet.')),
+        el('div',{class:'control'},button(data.gmailClientId?'Change':'Use my own',()=>gmailSetup(data,refresh),'small'),
+          data.gmailClientId&&button('Remove',task(async()=>{await rpc('gmail:client',{clientId:''});await refresh();},'Removed.'),'quiet small'))),
+      el('li',{},el('div',{class:'label'},el('span',{},'Redirect URI'),el('small',{},'For your own Web application client.')),el('div',{class:'control'},copyable(data.gmailRedirect,'redirect URI'))));
+  };
   void refresh().catch(()=>{});
-  return el('ul',{class:'settings-list'},
-    row('Gmail',status,config.gmail?(health?.successAt?'Last sync '+dateLabel(health.successAt):'Waiting for first sync')+(health?.error?' · '+health.error:''):'Read-only. Finds confirmations, interviews and assessments.'),
+  return [el('ul',{class:'settings-list'},
+    el('li',{},el('div',{class:'label'},el('span',{},'Gmail'),help),el('div',{class:'control'},status)),
     config.gmail&&row('Sync',el('span',{class:'actions'},button('Sync now',()=>operation('Sync Gmail','gmail:sync'),'small'),
       button('Disconnect',()=>formDialog('Disconnect Gmail',[paragraph('Recorded events stay.'),check('revoke','Also revoke Google access')],
         async values=>{await rpc('gmail:disconnect',{revoke:!!values.revoke});toast('Gmail disconnected.');},'Disconnect'),'quiet small'))),
-    row('Notifications',button('Send test',task(()=>rpc('notification:test'),'Test notification sent.'),'small')));
+    row('Notifications',button('Send test',task(()=>rpc('notification:test'),'Test notification sent.'),'small'))),
+    el('details',{class:'more'},el('summary',{},'Advanced'),advanced)];
 }
 function registrationEmail(config) {
   const value=input('registrationEmail','',{type:'email',placeholder:config.profile.email||'name@example.com','aria-label':'Registration email',maxlength:254});

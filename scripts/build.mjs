@@ -10,11 +10,16 @@ const {version}=JSON.parse(await readFile(path('package.json'),'utf8'));
 const key=process.env.MESHJOB_EXTENSION_PUBLIC_KEY || (await readFile(path('scripts/extension-public-key.txt'),'utf8')).trim();
 if(!/^[A-Za-z0-9+/]+=*$/.test(key)) throw new Error('Provide a base64 extension public key.');
 const out=resolve(process.env.MESHJOB_DIST||fileURLToPath(path('dist')));
+// Release builds ship MeshJob's Google Web OAuth client ID (not a secret) so Gmail connects in one click; users can also
+// enter their own client in Settings. Its redirect URI is https://<extension id>.chromiumapp.org/.
+const googleClient=process.env.MESHJOB_OAUTH_CLIENT_ID||await readFile(path('scripts/oauth-client-id.txt'),'utf8').then(value=>value.trim()).catch(()=>'');
+if(googleClient&&!/^[\w-]+\.apps\.googleusercontent\.com$/.test(googleClient)) throw new Error('Provide a Google OAuth client ID ending in .apps.googleusercontent.com.');
 await mkdir(out,{recursive:true});
 await cp(path('assets'),out,{recursive:true});
 await Promise.all([
   build({absWorkingDir:fileURLToPath(root),entryPoints:['src/background.js','src/dashboard.js','src/panel.js','src/content.js','src/archive-worker.js'],outdir:out,bundle:true,
-    format:'iife',platform:'browser',target:'chrome120',minify:true,legalComments:'linked',charset:'utf8',logLevel:'info'}),
+    format:'iife',platform:'browser',target:'chrome120',minify:true,legalComments:'linked',charset:'utf8',logLevel:'info',
+    define:{__MESHJOB_GOOGLE_CLIENT__:JSON.stringify(googleClient)}}),
   copyFile(path('node_modules/pdfjs-dist/build/pdf.min.mjs'),resolve(out,'pdf-runtime.mjs')),
   copyFile(path('node_modules/pdfjs-dist/build/pdf.worker.min.mjs'),resolve(out,'pdf-worker.mjs')),
   copyFile(path('node_modules/pdfjs-dist/LICENSE'),resolve(out,'PDFJS-LICENSE')),
@@ -40,13 +45,6 @@ const manifest={
     'open-full-view':{suggested_key:{default:'Alt+Shift+F'},description:'Open MeshJob full view'}},
   content_security_policy:{extension_pages:"script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"}
 };
-// Release builds ship the MeshJob Chrome Extension OAuth client (a client ID is not a secret) so Gmail connects in one click.
-const shippedClient=await readFile(path('scripts/oauth-client-id.txt'),'utf8').then(value=>value.trim()).catch(()=>'');
-if(process.env.MESHJOB_OAUTH_CLIENT_ID||shippedClient) {
-  const id=process.env.MESHJOB_OAUTH_CLIENT_ID||shippedClient;
-  if(!/^[\w-]+\.apps\.googleusercontent\.com$/.test(id)) throw new Error('Provide a Google Chrome Extension OAuth client ID.');
-  manifest.oauth2={client_id:id,scopes:['https://www.googleapis.com/auth/gmail.readonly']};
-}
 await writeFile(resolve(out,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
 if(process.env.MESHJOB_ZIP) {
   async function collect(directory,prefix='') {

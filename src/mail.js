@@ -84,30 +84,64 @@ export function mailEvent(mail,classification,app,account) {
   };
 }
 
-function oauthConfigured() {
-  return !!chrome.runtime.getManifest().oauth2?.client_id;
+// Gmail sign-in works for any Google account, independent of the account signed in to Chrome (spec 7):
+// chrome.identity.launchWebAuthFlow with a Web OAuth client whose redirect URI is this extension's chromiumapp.org URL.
+/* global __MESHJOB_GOOGLE_CLIENT__ */
+const SHIPPED_CLIENT = typeof __MESHJOB_GOOGLE_CLIENT__ === 'string' ? __MESHJOB_GOOGLE_CLIENT__ : '';
+export const CLIENT_ID = /^[\w-]{6,120}\.apps\.googleusercontent\.com$/;
+export const shippedClient = () => SHIPPED_CLIENT;
+export async function gmailClient() {
+  const {gmailClientId} = await chrome.storage.local.get('gmailClientId');
+  return CLIENT_ID.test(gmailClientId ?? '') ? gmailClientId : CLIENT_ID.test(SHIPPED_CLIENT) ? SHIPPED_CLIENT : '';
+}
+export const redirectUri = (id = chrome.runtime.id) => 'https://' + id + '.chromiumapp.org/';
+export function authUrl({clientId,redirect,interactive,account,state}) {
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  for (const [key,value] of Object.entries({client_id:clientId,redirect_uri:redirect,response_type:'token',scope:MAIL_SCOPE,
+    include_granted_scopes:'true',state,prompt:interactive?'select_account':'none',...(account?{login_hint:account}:{})})) url.searchParams.set(key,value);
+  return url.href;
+}
+export function parseRedirect(responseUrl,state,redirect) {
+  if (typeof responseUrl !== 'string' || !responseUrl.startsWith(redirect)) throw new Error('Google returned an unexpected sign-in response.');
+  const values = new URLSearchParams(new URL(responseUrl).hash.slice(1));
+  if (values.get('error')) throw new Error(values.get('error')==='access_denied'?'Gmail access was not granted.':'Gmail sign-in needs you to reconnect.');
+  if (values.get('state') !== state) throw new Error('Gmail sign-in state did not match.');
+  const token = values.get('access_token'), seconds = Number(values.get('expires_in'));
+  if (!token || !Number.isFinite(seconds) || !String(values.get('scope') ?? '').split(' ').includes(MAIL_SCOPE)) throw new Error('Gmail read access was not granted.');
+  return {token,expiresAt:Date.now()+seconds*1000};
 }
 export async function getMailToken({interactive=false}={}) {
-  if (!oauthConfigured()) throw new Error('This build has no Gmail OAuth client. Follow the user-owned OAuth setup in the README.');
+  const clientId = await gmailClient();
+  if (!clientId) throw new Error('Set up Gmail in Settings first.');
   const granted = await chrome.permissions.contains({permissions:['identity'],origins:MAIL_ORIGINS});
-  if (!granted) throw new Error('Gmail permissions are missing.');
-  const result = await chrome.identity.getAuthToken({interactive,scopes:[MAIL_SCOPE],enableGranularPermissions:true});
-  if (!result.token || (result.grantedScopes && !result.grantedScopes.includes(MAIL_SCOPE))) throw new Error('Gmail consent was not granted.');
+  if (!granted) throw new Error('Gmail permissions are missing. Connect Gmail again in Settings.');
+  const {gmailToken} = await chrome.storage.session.get('gmailToken');
+  if (!interactive && gmailToken?.clientId === clientId && gmailToken.expiresAt > Date.now()+60_000) return gmailToken.token;
+  const {gmailAccount} = await chrome.storage.local.get('gmailAccount');
+  if (!interactive && !gmailAccount) throw new Error('Reconnect Gmail in Settings.');
+  const redirect = redirectUri(), state = crypto.randomUUID();
+  let response;
+  try {
+    response = await chrome.identity.launchWebAuthFlow({url:authUrl({clientId,redirect,interactive,account:interactive?'':gmailAccount,state}),interactive,
+      ...(interactive ? {} : {abortOnLoadForNonInteractive:false,timeoutMsForNonInteractive:10_000})});
+  } catch {
+    throw new Error(interactive ? 'Gmail sign-in was cancelled.' : 'Google needs you to sign in again. Reconnect Gmail in Settings.');
+  }
+  const result = parseRedirect(response,state,redirect);
+  await chrome.storage.session.set({gmailToken:{...result,clientId}});
   return result.token;
 }
 export async function disconnectMail(revoke=false) {
-  if (oauthConfigured() && revoke) {
-    let token;
-    try { token = await getMailToken(); } catch { /* Consent can already be absent. */ }
-    if (token) {
-      const response = await fetch('https://oauth2.googleapis.com/revoke',{
-        method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-        body:new URLSearchParams({token}),credentials:'omit',redirect:'error',signal:AbortSignal.timeout(8000)
-      });
-      if (!response.ok) throw new Error('Google rejected token revocation. Remove access in your Google Account.');
-    }
+  const {gmailToken} = await chrome.storage.session.get('gmailToken');
+  if (revoke && gmailToken?.token) {
+    const response = await fetch('https://oauth2.googleapis.com/revoke',{
+      method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams({token:gmailToken.token}),credentials:'omit',redirect:'error',signal:AbortSignal.timeout(8000)
+    });
+    if (!response.ok) throw new Error('Google rejected token revocation. Remove access in your Google Account.');
   }
-  if (await chrome.permissions.contains({permissions:['identity']})) await chrome.identity.clearAllCachedAuthTokens();
+  await chrome.storage.session.remove('gmailToken');
+  await chrome.storage.local.remove('gmailAccount');
 }
 
 class MailError extends Error {

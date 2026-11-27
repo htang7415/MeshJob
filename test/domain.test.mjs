@@ -305,4 +305,10 @@ test('SmartRecruiters and Workable boards list complete snapshots with dates',as
   }});
   assert.deepEqual(bodies,[null,'p2']);assert.equal(jobs.items.length,2);
   assert.equal(jobs.items[0].postedAt,null);assert.equal(jobs.items[0].ageFloor,'2026-01-02T00:00:00.000Z');
+  const {jobDetails}=await import('../src/sources.js');
+  const detail=await jobDetails(jobs.items[0],wk,async url=>{
+    assert.equal(url,'https://apply.workable.com/api/v2/accounts/example/jobs/AAAAAA11');
+    return Response.json({shortcode:'AAAAAA11',description:'<p>Build APIs.</p>',requirements:'<ul><li>3+ years of experience</li></ul>',benefits:''});
+  });
+  assert.equal(detail.jd,'Build APIs.\n3+ years of experience');
 });

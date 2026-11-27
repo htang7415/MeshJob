@@ -455,6 +455,12 @@ export async function jobDetails(item, source, fetcher, signal) {
     const sections = Object.values(row.jobAd?.sections ?? {}).map(section => section?.text).filter(Boolean).join('\n');
     return sections ? { ...item,jd:plain(sections) } : item;
   }
+  if (source.provider === 'workable' && /^[A-Z\d]{6,16}$/.test(item.externalId)) {
+    const row = await json(await fetcher('https://apply.workable.com/api/v2/accounts/' + source.tenant + '/jobs/' + item.externalId,{signal}));
+    if (String(row.shortcode).toUpperCase() !== item.externalId) throw new SourceError('Job detail identity did not match.');
+    const text = [row.description,row.requirements,row.benefits].filter(value=>typeof value==='string'&&value).join('\n');
+    return text ? { ...item,jd:plain(text) } : item;
+  }
   if (source.provider === 'workday') {
     const url = new URL(item.url);
     const path = url.pathname.slice(('/' + source.site).length);

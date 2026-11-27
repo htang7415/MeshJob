@@ -195,6 +195,22 @@ test('Gmail sync is read-only, idempotent for replayed history, and links the ri
   const actions=await db.events.filter(e=>e.urgent).toArray();
   assert.equal(actions.length,2);assert.ok(actions.every(e=>!e.applicationId));
 });
+test('Gmail sign-in accepts any account and checks state, scope and redirect',async()=>{
+  const {authUrl,parseRedirect,redirectUri,CLIENT_ID}=await import('../src/mail.js');
+  const redirect=redirectUri('abcdefghijklmnopabcdefghijklmnop');
+  assert.equal(redirect,'https://abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/');
+  const url=new URL(authUrl({clientId:'1-a.apps.googleusercontent.com',redirect,interactive:true,state:'s1'}));
+  assert.equal(url.searchParams.get('prompt'),'select_account');assert.equal(url.searchParams.get('response_type'),'token');
+  assert.equal(url.searchParams.get('scope'),'https://www.googleapis.com/auth/gmail.readonly');assert.equal(url.searchParams.get('login_hint'),null);
+  const silent=new URL(authUrl({clientId:'1-a.apps.googleusercontent.com',redirect,interactive:false,account:'other@example.invalid',state:'s2'}));
+  assert.equal(silent.searchParams.get('prompt'),'none');assert.equal(silent.searchParams.get('login_hint'),'other@example.invalid');
+  const ok=parseRedirect(redirect+'#access_token=t&expires_in=3599&state=s1&scope=https://www.googleapis.com/auth/gmail.readonly',"s1",redirect);
+  assert.equal(ok.token,'t');assert.ok(ok.expiresAt>Date.now());
+  assert.throws(()=>parseRedirect(redirect+'#access_token=t&expires_in=3599&state=x&scope=https://www.googleapis.com/auth/gmail.readonly','s1',redirect),/state/);
+  assert.throws(()=>parseRedirect(redirect+'#access_token=t&expires_in=3599&state=s1&scope=email','s1',redirect),/not granted/);
+  assert.throws(()=>parseRedirect('https://evil.example/#access_token=t','s1',redirect),/unexpected/);
+  assert.ok(CLIENT_ID.test('123-abc.apps.googleusercontent.com'));assert.ok(!CLIENT_ID.test('abc'));
+});
 test('company alone does not link multiple or single applications',async()=>{
   const examples=[{...fixtureJob,id:'a',createdAt:'2026-11-19T00:00:00Z'},
     {...fixtureJob,id:'b',title:'Data scientist',requisition:'REQ-1235',createdAt:'2026-11-19T00:00:00Z'}];

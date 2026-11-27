@@ -2,7 +2,7 @@ import { db, guarded, settings, updateSettings } from './db.js';
 import { CATALOG } from './catalog.js';
 import { ATS_ORIGINS, canonicalUrl, httpUrl, list, nowISO, publicUrl, sponsorshipEvidence, uid } from './domain.js';
 import { greenhouseEmbed } from './form-rules.js';
-import { disconnectMail, getMailToken } from './mail.js';
+import { CLIENT_ID, disconnectMail, getMailToken, gmailClient, gmailHttp, redirectUri, shippedClient } from './mail.js';
 import { portableConfig } from './portability.js';
 import { candidateDetails } from './discovery.js';
 import { evaluateCandidate, matchPreferences, relevantFacts } from './intelligence.js';
@@ -275,14 +275,20 @@ const handlers={
     return true;
   },
   'integrations:status':async ()=>{
-    const local=await chrome.storage.local.get(['claudeKey','registrationEmail']);
-    return {claude:!!local.claudeKey,registrationEmail:local.registrationEmail??'',gmailConfigured:!!chrome.runtime.getManifest().oauth2,
+    const local=await chrome.storage.local.get(['claudeKey','registrationEmail','gmailAccount','gmailClientId']);
+    return {claude:!!local.claudeKey,registrationEmail:local.registrationEmail??'',gmailConfigured:!!await gmailClient(),gmailShipped:!!shippedClient(),
+      gmailAccount:local.gmailAccount??'',gmailClientId:local.gmailClientId??'',gmailRedirect:redirectUri(),extensionId:chrome.runtime.id,
       atsAccess:await chrome.permissions.contains({origins:ATS_ORIGINS})};
   },
   'gmail:connect':async ()=>{
-    await getMailToken({interactive:true});
+    const token=await getMailToken({interactive:true});
+    const profile=await gmailHttp(token)('/profile');
+    const account=typeof profile.emailAddress==='string'?profile.emailAddress.slice(0,254):'';
+    const {gmailAccount}=await chrome.storage.local.get('gmailAccount');
+    await chrome.storage.local.set({gmailAccount:account});
     const previous=await settings();
-    if(!previous.gmail) await db.runtime.delete('gmail-cursor');
+    // A different mailbox starts a fresh cursor.
+    if(!previous.gmail||gmailAccount!==account) await db.runtime.delete('gmail-cursor');
     await updateSettings({gmail:true,markRead:false});
     void tick().catch(()=>{});
     return true;
@@ -301,6 +307,13 @@ const handlers={
     return previous.gmail;
   },
   'gmail:sync':message=>recordManualRun('gmail',message.op),
+  'gmail:client':async message=>{
+    const id=String(message.clientId??'').trim();
+    if(id&&!CLIENT_ID.test(id)) throw new Error('Enter a Google OAuth client ID ending in .apps.googleusercontent.com.');
+    if(id) await chrome.storage.local.set({gmailClientId:id});else await chrome.storage.local.remove('gmailClientId');
+    await chrome.storage.session.remove('gmailToken');
+    return true;
+  },
   'search:now':message=>recordManualRun('search',message.op),
   'notification:test':()=>testNotification(),
   'action:status':async message=>{

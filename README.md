@@ -68,7 +68,7 @@ Set `MESHJOB_NATIVE_CHROME=1` and `MESHJOB_BROWSER` to the installed Chrome exec
 
 ## Sources and freshness
 
-The bundled catalog includes 31 public employer boards across Greenhouse, Ashby, and Lever. SmartRecruiters and Workable boards can be added by URL. We Work Remotely RSS and three public GitHub new-grad lists are optional. Public Careers pages are supported when they expose readable JobPosting data. Workday monitoring needs both Chrome origin access and terms that permit automated checks for the particular tenant.
+The bundled catalog includes 31 public employer boards across Greenhouse, Ashby, and Lever. SmartRecruiters and Workable boards can be added by URL, including their job descriptions for matching. We Work Remotely RSS and three public GitHub new-grad lists are optional. Public Careers pages are supported when they expose readable JobPosting data. Workday monitoring needs both Chrome origin access and terms that permit automated checks for the particular tenant.
 
 Sources are checked every 10 minutes while Chrome is running and search is Active. Workday reads only its newest pages between complete snapshots every six hours. Discover shows **New** jobs (an original posting time inside your window) and **Newly detected** jobs (absent from the previous complete check). Any earlier evidence hides a job as older: Greenhouse `first_published`, Lever `createdAt`, Ashby `publishedAt`, SmartRecruiters `releasedDate`, Workday and Workable age labels, or MeshJob having seen it before the window. A newly added board therefore adds none of its backlog. Same-role relistings are treated as reposts. Undated jobs appear only with **Include jobs without a posting date**. [Greenhouse](https://docs.greenhouse.io/job-board.html), [Ashby](https://developers.ashbyhq.com/docs/public-job-posting-api), [Lever](https://github.com/lever/postings-api), [We Work Remotely RSS](https://weworkremotely.com/remote-job-rss-feed)
 
@@ -80,9 +80,16 @@ In **Settings → Claude**, set a personal API key and a monthly budget (default
 
 ### Gmail
 
-Gmail access is read-only (`gmail.readonly`); MeshJob never changes your mailbox. Release builds that include the MeshJob OAuth client show **Settings → Gmail → Connect Gmail**: choose your account, approve, and syncing starts. Chrome uses the Google account signed in to the Chrome profile, so that account should be the Gmail you use for applications.
+Gmail access is read-only (`gmail.readonly`); MeshJob never changes your mailbox. Any Gmail account works, including one that is not the account signed in to Chrome: **Settings → Gmail → Connect Gmail** opens Google's account chooser. MeshJob renews access in the background and asks you to reconnect only when Google requires it. **Switch account** moves to another mailbox.
 
-Until Google verifies the restricted Gmail scope, the consent screen says the app is unverified, and an unverified project can be used by at most 100 accounts in total. To ship a client, create a Google Cloud project, enable the Gmail API, publish the OAuth consent screen (Testing mode expires consent after 7 days), create a **Chrome Extension** OAuth client for MeshJob's fixed extension ID, and put the client ID in `scripts/oauth-client-id.txt` before building. Forks can instead set `MESHJOB_OAUTH_CLIENT_ID` (and `MESHJOB_EXTENSION_PUBLIC_KEY` for a separate identity). [Chrome OAuth guide](https://developer.chrome.com/docs/extensions/how-to/integrate/oauth), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [Unverified apps](https://support.google.com/cloud/answer/7454865)
+If your build includes a shared MeshJob client, **Connect Gmail** is all you need. Otherwise choose **Set up Gmail** and create your own client once, with no rebuild needed:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the Gmail API.
+2. Configure the OAuth consent screen as **External**, add the `gmail.readonly` scope, and **publish** the app. In Testing mode Google ends access after 7 days.
+3. Create an OAuth client ID of type **Web application**. Add the redirect URI shown in **Settings → Gmail → Advanced** (`https://<extension id>.chromiumapp.org/`).
+4. Paste the client ID in MeshJob and choose **Connect Gmail**.
+
+Maintainers can ship a shared client by putting a Web application client ID in `scripts/oauth-client-id.txt` (or `MESHJOB_OAUTH_CLIENT_ID`) before building; its redirect URI uses MeshJob's fixed extension ID. Until Google verifies the restricted Gmail scope, the consent screen says the app is unverified and an unverified project serves at most 100 accounts in total; beyond that, users add their own client as above. [Chrome launchWebAuthFlow](https://developer.chrome.com/docs/extensions/reference/api/identity#method-launchWebAuthFlow), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [Unverified apps](https://support.google.com/cloud/answer/7454865)
 
 ## Data and privacy
 
