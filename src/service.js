@@ -265,24 +265,36 @@ export async function searchNow({generation,op}={}) {
     if (!claude) throw new Error('Connect Claude in Profile before running a web search.');
     const preferences = Object.fromEntries(['titles','aliases','locations','countries','seniority','employmentType','workMode'].map(key=>[key,config.preferences[key].slice(0,12)]));
     const leads = await claude.searchJobs({...preferences,freshnessHours:config.preferences.freshnessHours});
-    let count=0;
+    // Leads are verified through the employer's own ATS API; unverifiable leads are dropped and new boards are suggested (spec 3.3).
+    let count=0, boards=0;
+    const snapshots=new Map();
     for (const lead of leads) {
       await checkMode(generation,task.signal);
       const identity = postingIdentity(lead.url);
-      const url = publicUrl(lead.url);
-      const officialUrl = canonicalUrl(url.href);
+      if (!identity) continue;
+      const {source}=identity;
+      if (!await db.sources.get(source.id) && !await db.runtime.get('suggest:'+source.id)) {
+        const saved=await guarded(generation,[db.runtime],()=>db.runtime.put({id:'suggest:'+source.id,kind:'suggestion',
+          source:{...source,name:lead.company||source.name},title:lead.title,expiresAt:Date.now()+14*86_400_000}));
+        if (saved!==null) boards++;
+      }
+      if (source.provider==='workday' || !await chrome.permissions.contains({origins:[pattern(source.endpoint)]})) continue;
+      try {
+        if (!snapshots.has(source.id)) snapshots.set(source.id,await collect(source,{fetcher:scopedFetch(generation,task.signal,source.origin)}));
+      } catch (error) { if (task.signal.aborted) throw error; snapshots.set(source.id,{items:[]}); }
+      const item = snapshots.get(source.id).items?.find(row=>row.keys.includes(identity.key));
+      if (!item) continue;
+      const {jd, ...listing} = item;
       const added = await guarded(generation,[db.jobs],async()=>{
-        const existing = await findJob(identity?[identity.key]:[],[officialUrl]);
-        if (existing) return false;
-        const job = {...lead,url:officialUrl,provider:'ai',id:uid(),urls:[officialUrl],keys:identity?[identity.key]:[],
-          externalId:identity?.externalId,firstSeenAt:nowISO(),sourceIds:[],members:{},active:false,official:false,lead:true};
+        if (await findJob(listing.keys,[listing.url])) return false;
+        const job = {...listing,id:uid(),urls:[listing.url],firstSeenAt:nowISO(),sourceIds:[],members:{},active:true,official:true,lead:true,verifiedAt:nowISO()};
         if (!preferenceDecision(job,config.preferences).eligible) return false;
         await db.jobs.add(job);
         return true;
       });
       if (added) count++;
     }
-    return {count};
+    return {count,boards};
   } finally { task.done(); await release('run:search',lock); }
 }
 

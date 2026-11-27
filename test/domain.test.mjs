@@ -286,3 +286,23 @@ test('options match through synonyms and prefixes and never guess between two',a
   assert.equal(sourceFromReferrer('https://careers.example.com/jobs','https://www.example.com/apply'),'');
   assert.equal(sourceFromReferrer('',''),'');
 });
+
+test('SmartRecruiters and Workable boards list complete snapshots with dates',async()=>{
+  const sr=detectSource('https://jobs.smartrecruiters.com/Example');
+  const listing=await collect(sr,{fetcher:async url=>{
+    assert.match(url,/limit=100&offset=0$/);
+    return Response.json({totalFound:1,content:[{id:'744000000000001',name:'Data Analyst',releasedDate:'2026-11-20T10:00:00.000Z',company:{name:'Example Co'},
+      location:{city:'Austin',region:'TX',country:'us'},typeOfEmployment:{label:'Full-time'}}]});
+  }});
+  assert.equal(listing.items[0].postedAt,'2026-11-20T10:00:00.000Z');assert.deepEqual(listing.items[0].countries,['United States']);
+  assert.equal(listing.items[0].url,'https://jobs.smartrecruiters.com/Example/744000000000001');
+  const wk=detectSource('https://apply.workable.com/example/');
+  const bodies=[];
+  const jobs=await collect(wk,{fetcher:async (url,options)=>{
+    bodies.push(options.body.token??null);
+    return Response.json(options.body.token?{total:2,results:[{shortcode:'BBBBBB22',title:'Designer',state:'published',published:'2026-01-02T00:00:00.000Z',location:{country:'France'}}]}:
+      {total:2,nextPage:'p2',results:[{shortcode:'AAAAAA11',title:'Engineer',state:'published',published:'2026-01-01T00:00:00.000Z',location:{country:'France'}}]});
+  }});
+  assert.deepEqual(bodies,[null,'p2']);assert.equal(jobs.items.length,2);
+  assert.equal(jobs.items[0].postedAt,null);assert.equal(jobs.items[0].ageFloor,'2026-01-02T00:00:00.000Z');
+});

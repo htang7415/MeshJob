@@ -10,7 +10,8 @@ export const PRICES = {
 };
 const SEARCH_PRICE = .01;
 const MAX_INPUT = 24_000;
-const MAX_OUTPUT = 1800;
+const MAX_OUTPUT = 4096;
+export const ATS_DOMAINS = ['greenhouse.io','ashbyhq.com','lever.co','myworkdayjobs.com','smartrecruiters.com','workable.com'];
 const searchSchema = z.object({jobs:z.array(z.object({
   company:z.string().min(1).max(160),title:z.string().min(1).max(200),url:z.url(),
   location:z.string().max(240),evidence:z.string().max(350)
@@ -61,12 +62,31 @@ async function reserve(kind,model,estimate,config,generation) {
   });
 }
 
+// JSON Schema for output_config.format: objects closed, length and range limits left to Zod (spec 3.5).
+export function apiSchema(schema) {
+  const clean=node=>{
+    if(Array.isArray(node)) return node.map(clean);
+    if(!node||typeof node!=='object') return node;
+    const out={};
+    for(const [key,value] of Object.entries(node)) {
+      if(['$schema','minLength','maxLength','minimum','maximum','exclusiveMinimum','exclusiveMaximum','multipleOf','maxItems','pattern'].includes(key)) continue;
+      if(key==='minItems'&&value>1) continue;
+      out[key]=clean(value);
+    }
+    if(out.type==='object') out.additionalProperties=false;
+    return out;
+  };
+  return clean(z.toJSONSchema(schema));
+}
 export function newClaude({config,key,generation,fetcher=fetch,signal}) {
-  async function request(kind,instruction,payload,schema,{model=config.model,searches=0}={}) {
+  async function request(kind,instruction,payload,schema,{model=config.model,searches=0,stable}={}) {
     if (!key) throw new Error('Connect a Claude API key in Profile.');
     if (!PRICES[model]) throw new Error('This model has no bundled pricing. Select a priced model.');
     const message = JSON.stringify(payload);
-    if (new TextEncoder().encode(message).byteLength > MAX_INPUT-2048) throw new Error('Claude input exceeded the limit.');
+    const prefix = stable ? JSON.stringify(stable) : '';
+    if (new TextEncoder().encode(prefix+message).byteLength > MAX_INPUT-2048) throw new Error('Claude input exceeded the limit.');
+    // Stable profile facts go first behind a cache breakpoint; the job-specific part follows.
+    const userContent = stable ? [{type:'text',text:'Candidate facts: '+prefix,cache_control:{type:'ephemeral'}},{type:'text',text:message}] : message;
     const ceiling = pricing(model,{input_tokens:searches ? 100000 : MAX_INPUT,output_tokens:MAX_OUTPUT},searches);
     const reservation = await reserve(kind,model,ceiling,config,generation);
     if (!reservation) throw new Error('Search services are inactive.');
@@ -81,8 +101,9 @@ export function newClaude({config,key,generation,fetcher=fetch,signal}) {
         signal:signal ? AbortSignal.any([signal,timeout]) : timeout,
         headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
         body:JSON.stringify({
-          model,max_tokens:MAX_OUTPUT,system:safety+' '+instruction,messages:[{role:'user',content:message}],
-          ...(searches ? {tools:[{type:'web_search_20250305',name:'web_search',max_uses:searches}]} : {})
+          model,max_tokens:MAX_OUTPUT,system:safety+' '+instruction,messages:[{role:'user',content:userContent}],
+          output_config:{effort:'low',...(searches ? {} : {format:{type:'json_schema',schema:apiSchema(schema)}})},
+          ...(searches ? {tools:[{type:'web_search_20250305',name:'web_search',max_uses:searches,allowed_domains:ATS_DOMAINS}]} : {})
         })
       });
       if (!response.ok) {
@@ -109,11 +130,11 @@ export function newClaude({config,key,generation,fetcher=fetch,signal}) {
   }
   return {
     searchJobs:async query => (await request('search',
-      'Use web search for fresh jobs matching target titles, location and level. Prefer official careers and ATS URLs. Return {jobs:[{company,title,url,location,evidence}]}. Dates and active status require independent verification.',
+      'Use web search to find employers currently hiring for the target titles, location and level, and their official ATS job posting URLs. Return {jobs:[{company,title,url,location,evidence}]} using only ATS posting URLs you found. MeshJob verifies each posting itself.',
       query,searchSchema,{searches:Math.max(1,Math.min(5,config.searchesPerRound))})).jobs.filter(lead => publicUrl(lead.url)),
-    evaluateJob:async payload => request('match',
+    evaluateJob:async (payload,stable) => request('match',
       'Score skills, experience, seniority, and domain separately from 0–100 using evidence. Return {skills,experience,seniority,domain,strengths,gaps,confidence,resumeId,coverId,visaAssessment:{status,refs}}. confidence is High, Medium, or Low. Only choose supplied material IDs or null. Visa refs must be indices in the provided evidence.',
-      payload,matchSchema),
+      payload,matchSchema,{stable}),
     mapFields:async payload => (await request('map',
       'Map unfamiliar ordinary questions only to keys from the supplied key list. Return {fields:[{id,key}]}. Use null for ambiguous, sensitive, legal, consent or unsupported fields.',
       payload,fieldSchema)).fields,
@@ -129,6 +150,8 @@ export function newClaude({config,key,generation,fetcher=fetch,signal}) {
   };
 }
 
+// Only these preferences affect a match; editing the posting window or location filters keeps scores.
+export const matchPreferences=preferences=>Object.fromEntries(['titles','seniority','skills','industries','companies'].map(key=>[key,(preferences?.[key]??[]).slice(0,12)]));
 export function relevantFacts(profile={}) {
   return {
     skills:(profile.skills ?? []).join(', ').slice(0,900),
@@ -145,10 +168,11 @@ export async function evaluateCandidate(job,config,provider,generation) {
   const score=material=>new Set(normalized([material.label,...material.tags,material.text.slice(0,6000)].join(' ')).split(' ')
     .filter(word=>words.has(word))).size;
   const shortlist = ['resume','cover'].flatMap(type=>rows.filter(row=>row.type===type).map(row=>({row,score:score(row)}))
-    .sort((a,b)=>b.score-a.score).slice(0,type==='resume'?14:6).map(entry=>entry.row));
-  const compact = shortlist.map(({id,type,text,tags,revision,label})=>({id,type,revision,label,tags:tags.slice(0,8),text:String(text ?? '').slice(0,260)}));
+    .sort((a,b)=>b.score-a.score).slice(0,type==='resume'?5:2).map(entry=>entry.row));
+  const compact = shortlist.map(({id,type,text,tags,revision,label})=>({id,type,revision,label,tags:tags.slice(0,8),text:String(text ?? '').slice(0,type==='resume'?1600:400)}));
   const facts = relevantFacts(config.profile);
-  const key = await hash(JSON.stringify(['rubric:1',config.model,job.jdHash,facts,config.preferences,rows.map(({id,revision})=>[id,revision])]));
+  const preferences = matchPreferences(config.preferences);
+  const key = await hash(JSON.stringify(['rubric:2',config.model,job.jdHash,facts,preferences,rows.map(({id,revision})=>[id,revision])]));
   if (job.matchKey === key && job.match) return job.match;
   const lease=await claim('match:'+key,'lease',75_000,generation);
   if(!lease) return (await db.jobs.get(job.id))?.match??null;
@@ -158,9 +182,8 @@ export async function evaluateCandidate(job,config,provider,generation) {
     const citation = job.sponsorship?.items ?? [];
     const result = await provider.evaluateJob({
       role:{title:job.title,company:job.company,description:job.jd.slice(0,4800)},
-      facts,preferences:Object.fromEntries(['titles','seniority','skills','industries','companies'].map(key=>[key,config.preferences[key].slice(0,12)])),
-      materials:compact,visa:citation.slice(0,6).map(({text,scope,status})=>({text:text.slice(0,150),scope,status}))
-    });
+      visa:citation.slice(0,6).map(({text,scope,status})=>({text:text.slice(0,150),scope,status}))
+    },{facts,preferences,materials:compact});
     const resumeId = rows.some(row=>row.id===result.resumeId&&row.type==='resume') ? result.resumeId : null;
     const coverId = rows.some(row=>row.id===result.coverId&&row.type==='cover') ? result.coverId : null;
     const match = {...result,resumeId,coverId,score:matchScore(result),at:nowISO(),visaAssessment:{
@@ -168,7 +191,7 @@ export async function evaluateCandidate(job,config,provider,generation) {
     }};
     await guarded(generation,[db.jobs,db.materials],async () => {
       const latest=await settings();
-      if(latest.model!==config.model||JSON.stringify(latest.preferences)!==JSON.stringify(config.preferences)||
+      if(latest.model!==config.model||JSON.stringify(matchPreferences(latest.preferences))!==JSON.stringify(preferences)||
         JSON.stringify(relevantFacts(latest.profile))!==JSON.stringify(facts)) return;
       const versions=(await db.materials.orderBy('id').toArray()).filter(row=>!row.archived).map(({id,revision})=>[id,revision]);
       if(JSON.stringify(versions)!==JSON.stringify(rows.map(({id,revision})=>[id,revision]))) return;

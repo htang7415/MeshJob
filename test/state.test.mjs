@@ -211,6 +211,7 @@ test('Claude reserves budget, caps search tool uses, and reconciles actual estim
     calls++;
     const body=JSON.parse(req.body);
     assert.equal(body.tools[0].max_uses,3);
+    assert.ok(body.tools[0].allowed_domains.includes('greenhouse.io'));assert.equal(body.output_config.effort,'low');assert.equal(body.output_config.format,undefined);
     assert.equal(req.headers['x-api-key'],'fixture-key');
     return Response.json({usage:{input_tokens:1000,output_tokens:900,server_tool_use:{web_search_requests:2}},stop_reason:'end_turn',content:[
       {type:'server_tool_use',name:'web_search'},
@@ -223,6 +224,35 @@ test('Claude reserves budget, caps search tool uses, and reconciles actual estim
   await updateSettings({budget:0});
   await assert.rejects(()=>claude.searchJobs({titles:['Teacher']}),/budget/);
   assert.equal(calls,1);
+});
+test('matching uses structured output, caches profile facts and ignores non-matching edits',async()=>{
+  const config=await settings();
+  let body;
+  const fetcher=async (url,req)=>{
+    body=JSON.parse(req.body);
+    return Response.json({usage:{input_tokens:800,output_tokens:200},stop_reason:'end_turn',content:[{type:'text',text:JSON.stringify({
+      skills:80,experience:60,seniority:70,domain:50,strengths:['Python'],gaps:[],confidence:'High',resumeId:null,coverId:null,visaAssessment:{status:'Unknown',refs:[]}})}]});
+  };
+  const claude=newClaude({config,key:'fixture-key',generation:null,fetcher});
+  const result=await claude.evaluateJob({role:{title:'Engineer'}},{facts:{skills:'Python'}});
+  assert.equal(result.skills,80);
+  assert.equal(body.output_config.format.type,'json_schema');assert.equal(body.output_config.format.schema.additionalProperties,false);
+  assert.ok(!JSON.stringify(body.output_config.format.schema).includes('maxLength'));
+  assert.deepEqual(body.messages[0].content[0].cache_control,{type:'ephemeral'});
+  const {matchPreferences}=await import('../src/intelligence.js');
+  assert.deepEqual(matchPreferences({...config.preferences,freshnessHours:720,countries:['Canada']}),matchPreferences(config.preferences));
+});
+test('a Workday quick check adds new jobs without closing absent ones',async()=>{
+  const workday={...detectSource('https://example.wd5.myworkdayjobs.com/Careers'),permitted:true,name:'Example'};
+  await db.sources.add(workday);
+  const item=(n,title)=>{const key=workday.id+':R'+n;return {key,keys:[key],externalId:'R'+n,url:'https://example.wd5.myworkdayjobs.com/Careers/job/Remote/Role_R'+n,company:'Example',title,official:true};};
+  await saveSnapshot(workday,{items:[item(1,'Analyst'),item(2,'Designer')]},0);
+  await saveSnapshot(workday,{items:[item(3,'Engineer')],partial:true},0);
+  const jobs=await db.jobs.toArray();
+  assert.equal(jobs.length,3);assert.ok(jobs.every(job=>job.active));
+  assert.ok(jobs.find(job=>job.externalId==='R3').lastAbsentAt);
+  const {quickCheck}=await import('../src/discovery.js');
+  assert.equal(quickCheck(await db.sources.get(workday.id)),true);
 });
 test('cohorts count distinct submitted applications and use event history',async()=>{
   const first=(await saveApplication(fixtureJob)).application;

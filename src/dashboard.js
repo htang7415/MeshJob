@@ -89,7 +89,7 @@ function navigation() {
 async function pageData(tab) {
   const config=await settings();
   if(tab==='Discover') {
-    const [jobs,apps,sources,runtime]=await Promise.all([db.jobs.filter(job=>job.active||job.lead||job.hidden).toArray(),db.applications.toArray(),db.sources.toArray(),db.runtime.where('kind').equals('health').toArray()]);
+    const [jobs,apps,sources,runtime]=await Promise.all([db.jobs.filter(job=>job.active||job.lead||job.hidden).toArray(),db.applications.toArray(),db.sources.toArray(),db.runtime.where('kind').anyOf(['health','suggestion']).toArray()]);
     return {config,jobs,apps,sources,runtime};
   }
   if(tab==='Tracker') {
@@ -248,7 +248,7 @@ function discover(data) {
       config.onboarded&&button('Preferences',()=>discoveryPreferences()),
       menu('More actions',[button('Manage sources',()=>sourceDialog(data)),
         button('Refresh',()=>runDialog('Refresh sources','sources:refresh',{},r=>r.checked+' sources checked.'+(r.errors.length?' '+r.errors.length+' need attention.':''))),
-        button('Search with Claude',()=>runDialog('Claude web search','search:now',{},r=>r?.result?.count==null?'Search finished.':r.result.count+' new jobs or boards found.'))])
+        button('Search with Claude',()=>runDialog('Claude web search','search:now',{},r=>r?.result?.count==null?'Search finished.':r.result.count+' verified jobs · '+(r.result.boards??0)+' boards suggested.'))])
     ]),
     !config.onboarded&&el('div',{class:'notice flex between',style:'margin-bottom:16px'},paragraph('Choose your target roles and sources. You can change them anytime.'),
       el('div',{class:'actions'},button('Skip setup',task(()=>rpc('settings:update',{config:{onboarded:true}})),'quiet'),button('Set up discovery',()=>discoveryPreferences(true),'primary'))),
@@ -257,7 +257,17 @@ function discover(data) {
       select('discoverSort',[['recent','Most recent'],['match','Best match']],view.sort,{'aria-label':'Sort by'})),
     errorSources.length>0&&el('div',{class:'actions',style:'margin-bottom:10px'},button(errorSources.length+' source'+(errorSources.length===1?' needs':'s need')+' attention',()=>sourceDialog(data),'danger small')),
     searchHealth?.error&&paragraph('Claude search: '+searchHealth.error,'meta'),
+    suggestedBoards(runtime.filter(row=>row.kind==='suggestion'&&!sources.some(source=>source.id===row.source?.id))),
     el('div',{id:'view-results'},discoverResults(data)));
+}
+function suggestedBoards(rows) {
+  if(!rows.length) return null;
+  return el('section',{class:'group',style:'margin-bottom:14px'},el('h2',{},'Suggested boards'),el('ul',{class:'inset'},rows.slice(0,8).map(row=>el('li',{},
+    el('div',{class:'stack compact'},el('strong',{},row.source.name),el('small',{},row.source.provider+(row.title?' · hiring '+row.title:''))),
+    el('div',{class:'actions'},button('Add',task(async()=>{
+      await permit([origin(row.source.endpoint)]);
+      await rpc('sources:add',{entries:[row.source]});await db.runtime.delete(row.id);toast(row.source.name+' added.');
+    }),'primary small',{'aria-label':'Add '+row.source.name}),button('Dismiss',task(()=>db.runtime.delete(row.id)),'quiet small'))))));
 }
 root.addEventListener('change',event=>{
   const target=event.target;

@@ -37,6 +37,8 @@ import { cleanLabel, consentField, criticalField, fieldKey, greenhouseEmbed, lea
     if (/(^|\.)ashbyhq\.com$/.test(host)) return 'ashby';
     if (/(^|\.)lever\.co$/.test(host)) return 'lever';
     if (/(^|\.)(?:myworkdayjobs|myworkdaysite)\.com$/.test(host)) return 'workday';
+    if (/(^|\.)smartrecruiters\.com$/.test(host)) return 'smartrecruiters';
+    if (host==='apply.workable.com') return 'workable';
     return 'generic';
   };
   function embeddedForm() {

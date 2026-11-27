@@ -5,7 +5,7 @@ import { greenhouseEmbed } from './form-rules.js';
 import { disconnectMail, getMailToken } from './mail.js';
 import { portableConfig } from './portability.js';
 import { candidateDetails } from './discovery.js';
-import { evaluateCandidate, relevantFacts } from './intelligence.js';
+import { evaluateCandidate, matchPreferences, relevantFacts } from './intelligence.js';
 import { collect, detectSource, jsonPostings, plain, postingIdentity } from './sources.js';
 import {
   addSources, arm, cancelOperation, claudeFor, notifyUrgent, pattern, previewSource, recordManualRun, registerSchedules, runSource,
@@ -195,11 +195,13 @@ async function integrationPatch(raw) {
     preferences:cleaned.preferences?{...current.preferences,...cleaned.preferences}:current.preferences,
     ...(cleaned.slots?{slots:[...new Set(cleaned.slots)].sort()}:{})
   }));
-  const preferenceChanged=cleaned.preferences && JSON.stringify(before.preferences)!==JSON.stringify(conf.preferences);
-  const matchingChanged=preferenceChanged || cleaned.profile&&JSON.stringify(before.profile)!==JSON.stringify(conf.profile) || cleaned.model&&conf.model!==before.model;
-  if (matchingChanged) {
+  // Contact details, posting window and filters do not change a match; only match inputs do (spec 3.4).
+  const matchingChanged=JSON.stringify(matchPreferences(before.preferences))!==JSON.stringify(matchPreferences(conf.preferences)) ||
+    JSON.stringify(relevantFacts(before.profile))!==JSON.stringify(relevantFacts(conf.profile)) || conf.model!==before.model;
+  const filtersChanged=cleaned.preferences && JSON.stringify(before.preferences)!==JSON.stringify(conf.preferences);
+  if (matchingChanged||filtersChanged) {
     await db.transaction('rw',db.jobs,db.sources,async()=>{
-      await db.jobs.filter(job=>!!job.match||!!job.matchKey).modify(job=>{delete job.match;delete job.matchKey;});
+      if(matchingChanged) await db.jobs.filter(job=>!!job.match||!!job.matchKey).modify(job=>{delete job.match;delete job.matchKey;});
       await db.sources.filter(source=>source.enabled).modify(source=>{
         delete source.etag;delete source.modified;
         source.recheckCandidates=Date.now();

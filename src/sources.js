@@ -3,7 +3,7 @@ import { canonicalUrl, publicUrl, hasJobPath, exactDate, earliest, JOB_DESCRIPTI
 
 const { findAll, findOne, textContent } = DomUtils;
 const pathToken = /^[\w.-]{1,100}$/;
-export const PROVIDERS = ['greenhouse','ashby','lever','workday','rss','careers','github'];
+export const PROVIDERS = ['greenhouse','ashby','lever','workday','smartrecruiters','workable','rss','careers','github'];
 const JOB_AGGREGATORS=new Set(['weworkremotely.com','remotive.com','jobicy.com','himalayas.app','indeed.com','glassdoor.com','ziprecruiter.com']);
 const employment = { FullTime:'Full-time', PartTime:'Part-time', Intern:'Internship', Contract:'Contract', Temporary:'Temporary', FULL_TIME:'Full-time', PART_TIME:'Part-time', CONTRACTOR:'Contract', INTERN:'Internship' };
 const period = value => String(value??'').toLowerCase().replace(/^per[- ]/,'').replace(/^(?:annual|annually|yearly)$/,'year').replace(/^(hour|week|month)ly$/,'$1');
@@ -53,6 +53,12 @@ export function detectSource(value, hint = '') {
     provider = 'workday'; tenant = hostname.split('.')[0];
     site = /^[a-z]{2}-[A-Z]{2}$/.test(parts[0]) ? parts[1] : parts[0];
     endpoint = origin + '/wday/cxs/' + tenant + '/' + site + '/jobs';
+  } else if (['jobs.smartrecruiters.com','careers.smartrecruiters.com','api.smartrecruiters.com'].includes(hostname)) {
+    provider = 'smartrecruiters'; tenant = hostname === 'api.smartrecruiters.com' ? parts[2] : parts[0];
+    endpoint = 'https://api.smartrecruiters.com/v1/companies/' + tenant + '/postings';
+  } else if (hostname === 'apply.workable.com') {
+    provider = 'workable'; tenant = parts[0] === 'api' ? parts[3] : parts[0];
+    endpoint = 'https://apply.workable.com/api/v3/accounts/' + tenant + '/jobs';
   } else if (hostname === 'github.com' || hostname === 'raw.githubusercontent.com') {
     if (parts.length < 2 || !parts.slice(0,2).every(part => pathToken.test(part))) throw new Error('Enter a GitHub repository or Markdown file.');
     provider = 'github'; tenant = parts.slice(0,2).join('/');
@@ -66,7 +72,7 @@ export function detectSource(value, hint = '') {
     tenant = canonicalUrl(url.href);
     endpoint = tenant;
   }
-  if (!tenant || (['greenhouse','ashby','lever','workday'].includes(provider) && !pathToken.test(tenant)) || (provider === 'workday' && !pathToken.test(site))) throw new Error('Could not identify the board. Paste its public Careers URL.');
+  if (!tenant || (['greenhouse','ashby','lever','workday','smartrecruiters','workable'].includes(provider) && !pathToken.test(tenant)) || (provider === 'workday' && !pathToken.test(site))) throw new Error('Could not identify the board. Paste its public Careers URL.');
   const id = [provider, tenant, site ?? ''].join(':').toLowerCase();
   return { id, url:canonicalUrl(url.href), provider, tenant, site, endpoint, name:workdayEmployer(hostname)||tenant,
     interval:10, enabled:true, origin:new URL(endpoint).origin };
@@ -86,6 +92,10 @@ export function postingIdentity(value) {
       if (['ashby','lever'].includes(source.provider) && !/^[a-f\d-]{32,36}$/i.test(id ?? '')) return null;
     } else if (source.provider === 'workday') {
       id = workdayId(url.pathname);
+    } else if (source.provider === 'smartrecruiters') {
+      id = /^(\d{6,20})(?:-|$)/.exec(parts[1] ?? '')?.[1];
+    } else if (source.provider === 'workable') {
+      id = parts[1] === 'j' && /^[A-Z\d]{6,16}$/i.test(parts[2] ?? '') ? parts[2].toUpperCase() : undefined;
     }
     return id ? { key:source.id + ':' + id, source, externalId:id } : null;
   } catch { return null; }
@@ -239,7 +249,47 @@ export async function respectWorkdayRobots(source,fetcher,signal) {
   }
 }
 
-async function workday(source, fetcher, options) {
+async function smartrecruiters(source, fetcher, options) {
+  const items=[];
+  for (let offset=0; offset<5000; offset+=100) {
+    const page=await json(await fetcher(source.endpoint+'?limit=100&offset='+offset,options));
+    if (!Array.isArray(page.content) || !Number.isInteger(page.totalFound)) throw new SourceError('Invalid SmartRecruiters listing.');
+    for (const job of page.content) {
+      const place=job.location??{};
+      items.push({externalId:String(job.id),title:job.name,company:job.company?.name,requisition:job.refNumber,
+        location:[place.city,place.region,countriesName(String(place.country??'').toUpperCase())].filter(Boolean).join(', '),
+        countries:place.country?[countriesName(String(place.country).toUpperCase())]:undefined,locationCertain:!!place.city&&!place.remote,
+        workMode:place.remote?'Remote':place.hybrid?'Hybrid':'',employmentType:job.typeOfEmployment?.label,
+        url:'https://jobs.smartrecruiters.com/'+source.tenant+'/'+job.id,postedAt:job.releasedDate,dateKind:'SmartRecruiters.releasedDate'});
+    }
+    if (items.length>=page.totalFound || !page.content.length) {
+      if (items.length!==page.totalFound) throw new SourceError('SmartRecruiters pagination was incomplete.');
+      return {items:items.map(item=>record(source,item))};
+    }
+  }
+  throw new SourceError('SmartRecruiters listing exceeded the supported limit.');
+}
+async function workable(source, fetcher, options) {
+  const items=[];
+  let token;
+  for (let page=0; page<60; page++) {
+    const data=await json(await fetcher(source.endpoint,{...options,method:'POST',body:{query:'',location:[],department:[],worktype:[],remote:[],...(token?{token}:{})}}));
+    if (!Array.isArray(data.results) || !Number.isInteger(data.total)) throw new SourceError('Invalid Workable listing.');
+    for (const job of data.results.filter(job=>job.state==='published'&&!job.isInternal)) {
+      // Workable publishes a date only; it bounds age but cannot prove a job is new within hours.
+      const published=Date.parse(job.published);
+      items.push({externalId:String(job.shortcode).toUpperCase(),title:job.title,location:[job.location?.city,job.location?.region,job.location?.country].filter(Boolean).join(', '),
+        countries:job.location?.country?[job.location.country]:undefined,workMode:titleCase(job.workplace==='on_site'?'On-site':job.workplace),
+        employmentType:{full:'Full-time',part:'Part-time',contract:'Contract',temporary:'Temporary'}[job.type]??'',
+        url:'https://apply.workable.com/'+source.tenant+'/j/'+job.shortcode+'/',
+        ageFloor:Number.isFinite(published)&&published+86_400_000<Date.now()?new Date(published+86_400_000).toISOString():null});
+    }
+    token=data.nextPage;
+    if (!token) return {items:items.map(item=>record(source,item))};
+  }
+  throw new SourceError('Workable listing exceeded the supported limit.');
+}
+async function workday(source, fetcher, options, quick=false) {
   if (!source.permitted) throw new SourceError('Confirm that this career site permits automated public access before connecting.');
   const result = [];
   let total;
@@ -258,6 +308,8 @@ async function workday(source, fetcher, options) {
       if (new Set(result.map(item => item.key)).size !== total) throw new SourceError('Workday pagination repeated job IDs.');
       return { items:result };
     }
+    // Quick checks read the newest pages for new jobs only; closures need a complete snapshot.
+    if (quick && offset >= 20) return { items:result, partial:true };
   }
   throw new SourceError('Workday pagination exceeded the supported limit.');
 }
@@ -304,9 +356,11 @@ function feedRows(data, source) {
   });
 }
 
-export async function collect(source, { fetcher = fetchPublic, signal, full = false } = {}) {
+export async function collect(source, { fetcher = fetchPublic, signal, full = false, quick = false } = {}) {
   const options = {signal, ...(full ? {} : {etag:source.etag,modified:source.modified})};
-  if (source.provider === 'workday') return workday(source,fetcher,options);
+  if (source.provider === 'workday') return workday(source,fetcher,options,quick && !full);
+  if (source.provider === 'smartrecruiters') return smartrecruiters(source,fetcher,{signal});
+  if (source.provider === 'workable') return workable(source,fetcher,{signal});
   const response = await fetcher(source.endpoint, options);
   if (response.status === 304) return { unchanged:true };
   let items;
@@ -394,6 +448,12 @@ export async function jobDetails(item, source, fetcher, signal) {
       const first = plain(row.content);
       return { ...item,jd:/<\/?[a-z][^>]*>/i.test(first) ? plain(first) : first,requisition:row.requisition_id ?? item.requisition };
     }
+  }
+  if (source.provider === 'smartrecruiters' && /^\d+$/.test(item.externalId)) {
+    const row = await json(await fetcher(source.endpoint + '/' + item.externalId,{signal}));
+    if (String(row.id) !== item.externalId) throw new SourceError('Job detail identity did not match.');
+    const sections = Object.values(row.jobAd?.sections ?? {}).map(section => section?.text).filter(Boolean).join('\n');
+    return sections ? { ...item,jd:plain(sections) } : item;
   }
   if (source.provider === 'workday') {
     const url = new URL(item.url);

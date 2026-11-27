@@ -4,6 +4,9 @@ import { collect, fetchPublic, jobDetails, verifyOfficialPosting } from './sourc
 import { findJob } from './tracker.js';
 
 const intervalMs = source => Math.max(10,source.interval || 10) * 60_000;
+export const FULL_SNAPSHOT_MS = 6 * 3_600_000;
+// Workday reads only the newest pages between complete snapshots (spec 3.1).
+export const quickCheck = (source, now = Date.now()) => source.provider === 'workday' && !!source.lastCompleteAt && now - Date.parse(source.lastCompleteAt) < FULL_SNAPSHOT_MS;
 
 export async function saveSnapshot(source, snapshot, generation, startedAt = nowISO()) {
   const checkAt = nowISO();
@@ -11,6 +14,7 @@ export async function saveSnapshot(source, snapshot, generation, startedAt = now
     const current = await db.sources.get(source.id);
     if (!current?.enabled || current.endpoint !== source.endpoint || (current.lastAttemptAt && current.lastAttemptAt > startedAt)) return null;
     const success = {lastCompleteAt:checkAt,lastAttemptAt:startedAt,failures:0,error:null,nextAt:Date.now()+intervalMs(current),fetched:!snapshot.unchanged};
+    if (snapshot.partial && !current.lastCompleteAt) throw new Error('A quick check needs a complete snapshot first.');
     if (snapshot.unchanged) {
       if (!current.lastCompleteAt) throw new Error('Received an unchanged response before an initial snapshot.');
       await db.sources.update(source.id,success);
@@ -21,8 +25,9 @@ export async function saveSnapshot(source, snapshot, generation, startedAt = now
     const changed = [];
     const repostWindow = Date.now()-30*86_400_000;
     const sameListing = (a,b) => normalized(a.title)===normalized(b.title) && normalized(a.location)===normalized(b.location);
-    const uninterrupted = current.lastCompleteAt && !current.failures &&
-      Date.parse(startedAt)-Date.parse(current.lastCompleteAt) <= intervalMs(current)*1.55;
+    const uninterrupted = current.lastCompleteAt && !current.failures && (snapshot.partial
+      ? Date.parse(startedAt)-Date.parse(current.lastCompleteAt) <= FULL_SNAPSHOT_MS+intervalMs(current)*1.55
+      : Date.parse(startedAt)-Date.parse(current.lastCompleteAt) <= intervalMs(current)*1.55);
     for (const {jd, ...item} of snapshot.items) {
       const existing = await findJob(item.keys,[item.url]);
       const oldMember = existing?.members?.[source.id];
@@ -55,6 +60,10 @@ export async function saveSnapshot(source, snapshot, generation, startedAt = now
       await db.jobs.put(job);
       changed.push({job,item:{...item,jd},reopened,newJob:!existing});
     }
+    if (snapshot.partial) {
+      await db.sources.update(source.id,{lastAttemptAt:startedAt,lastQuickAt:checkAt,failures:0,error:null,nextAt:Date.now()+intervalMs(current)});
+      return changed;
+    }
     for (const job of previous) {
       if (seen.has(job.id) || !job.members?.[source.id]?.active) continue;
       const members = {...job.members,[source.id]:{...job.members[source.id],active:false}};
@@ -78,12 +87,13 @@ export async function sourceFailure(source, error, generation, start) {
 }
 
 export async function monitorSource(source,{generation, signal, fetcher = fetchPublic, full = false, onCandidates} = {}) {
+  const quick = !full && quickCheck(source);
   const startedAt = nowISO();
   const config = await settings();
   if (generation != null && (config.mode !== 'Active' || config.generation !== generation)) return;
   let changed;
   try {
-    const snapshot = await collect(source,{signal,fetcher,full});
+    const snapshot = await collect(source,{signal,fetcher,full,quick});
     if (source.provider==='careers' && snapshot.items) {
       const verify=snapshot.items.filter(item=>item.postedAt && item.url!==source.endpoint);
       for(const item of verify.slice(0,8)) Object.assign(item,await verifyOfficialPosting(item,source,fetcher,signal));
