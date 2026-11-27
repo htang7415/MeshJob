@@ -31,11 +31,13 @@ const notices=await Promise.all(licensePackages.map(async name=>{
 await writeFile(resolve(out,'THIRD_PARTY_NOTICES.txt'),notices.join('\n\n'+('-'.repeat(72))+'\n\n')+'\n');
 const manifest={
   manifest_version:3,name:'MeshJob',version,key,description:'Find jobs early, fill applications accurately, and track your search locally.',
-  minimum_chrome_version:'120',permissions:['activeTab','scripting','storage','alarms','notifications','sidePanel'],
+  minimum_chrome_version:'120',permissions:['activeTab','scripting','storage','alarms','notifications','sidePanel','declarativeContent'],
   optional_permissions:['identity','webNavigation'],optional_host_permissions:['https://*/*'],
   action:{default_title:'Open MeshJob',default_icon:{16:'icons/icon16.png',32:'icons/icon32.png'}},
   icons:{16:'icons/icon16.png',32:'icons/icon32.png',48:'icons/icon48.png',128:'icons/icon128.png'},
   background:{service_worker:'background.js'},side_panel:{default_path:'panel.html'},
+  commands:{_execute_action:{suggested_key:{default:'Alt+Shift+M'},description:'Open MeshJob beside the page'},
+    'open-full-view':{suggested_key:{default:'Alt+Shift+F'},description:'Open MeshJob full view'}},
   content_security_policy:{extension_pages:"script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"}
 };
 if(process.env.MESHJOB_OAUTH_CLIENT_ID) {

@@ -263,3 +263,25 @@ test('ATS listings carry original timestamps and Lever countries',async()=>{
   const l=await collect(lever,{fetcher:async()=>Response.json([{id,text:'Engineer',createdAt:Date.parse('2026-11-01T00:00:00Z'),country:'SG',hostedUrl:'https://jobs.lever.co/example/'+id}])});
   assert.equal(l.items[0].postedAt,'2026-11-01T00:00:00.000Z');assert.deepEqual(l.items[0].countries,['Singapore']);
 });
+
+test('options match through synonyms and prefixes and never guess between two',async()=>{
+  const {pickOption,requiredLabel,cleanLabel,learnable}=await import('../src/form-rules.js');
+  const {sourceFromReferrer}=await import('../src/tracker.js');
+  const pick=(options,value)=>options[pickOption(options,value)];
+  assert.equal(pick(['Canada','United States of America'],'United States'),'United States of America');
+  assert.equal(pick(['Colorado','California'],'CA'),'California');
+  assert.equal(pick(['Yes, I am authorized','No, I am not'],'Yes'),'Yes, I am authorized');
+  assert.equal(pick(['Master of Science','Bachelor of Science'],"Bachelor's"),'Bachelor of Science');
+  assert.equal(pick(['+44 United Kingdom','+1 United States'],'United States'),'+1 United States');
+  assert.equal(pickOption(['Yes - full time','Yes - part time','No'],'Yes'),-1);
+  assert.equal(pickOption(['Engineering','Engineering Management'],'Engineering Man'),-1);
+  assert.ok(requiredLabel('Email ✱')&&requiredLabel('Phone (required)')&&!requiredLabel('Website'));
+  assert.equal(cleanLabel('First Name *'),'First Name');
+  assert.ok(learnable({label:'How did you hear about us?',value:'A friend',type:'text'}));
+  assert.ok(!learnable({label:'Email',value:'a@example.invalid',type:'email'}));
+  assert.ok(!learnable({label:'How did you hear about us?',value:'x',type:'text',byMeshJob:true}));
+  assert.equal(sourceFromReferrer('https://www.linkedin.com/jobs/view/1','https://job-boards.greenhouse.io/x/jobs/1'),'LinkedIn');
+  assert.equal(sourceFromReferrer('https://job-boards.greenhouse.io/x','https://job-boards.greenhouse.io/x/jobs/1'),'');
+  assert.equal(sourceFromReferrer('https://careers.example.com/jobs','https://www.example.com/apply'),'');
+  assert.equal(sourceFromReferrer('',''),'');
+});

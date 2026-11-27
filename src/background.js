@@ -1,6 +1,6 @@
 import { db, guarded, settings, updateSettings } from './db.js';
 import { CATALOG } from './catalog.js';
-import { canonicalUrl, httpUrl, list, nowISO, publicUrl, sponsorshipEvidence, uid } from './domain.js';
+import { ATS_ORIGINS, canonicalUrl, httpUrl, list, nowISO, publicUrl, sponsorshipEvidence, uid } from './domain.js';
 import { greenhouseEmbed } from './form-rules.js';
 import { disconnectMail, getMailToken } from './mail.js';
 import { portableConfig } from './portability.js';
@@ -11,7 +11,8 @@ import {
   addSources, arm, cancelOperation, claudeFor, notifyUrgent, pattern, previewSource, recordManualRun, registerSchedules, runSource,
   scopedFetch, setMode, stopMail, stopSource, testNotification, tick
 } from './service.js';
-import { actionState, appendEvent, expiryEvidence, saveApplication } from './tracker.js';
+import { actionState, appendEvent, expiryEvidence, saveApplication, sourceFromReferrer } from './tracker.js';
+import { saveAnswer } from './materials.js';
 
 const base=chrome.runtime.getURL('');
 const opened=new Set();
@@ -24,16 +25,31 @@ async function dashboard(hash='') {
   if (!tab) return chrome.tabs.create({url:base+'dashboard.html'+hash});
   return chrome.tabs.update(tab.id,{active:true,...(hash?{url:base+'dashboard.html'+hash}:{})});
 }
+// The toolbar icon always opens the Side Panel (spec 2); Full view is one click away inside it.
 chrome.action.onClicked.addListener(tab=>{
-  const url=httpUrl(tab.url);
-  const refreshPanel=()=>chrome.runtime.sendMessage({type:'panel:access',tabId:tab.id,windowId:tab.windowId}).catch(()=>false);
-  if (url && (/(?:^|\.)(?:greenhouse\.io|ashbyhq\.com|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|linkedin\.com)$/.test(url.hostname) ||
-    /\/(?:jobs?|careers?|apply|application|positions?)(?:[/?#]|$)/i.test(url.pathname))) {
-    const openedPanel=chrome.sidePanel.open({tabId:tab.id});
-    const refreshed=refreshPanel();
-    void openedPanel.catch(async()=>{if(!await refreshed) await dashboard();});
-  } else if (url?.protocol==='https:') void refreshPanel().then(handled=>{if(!handled) return dashboard();});
-  else void dashboard();
+  const opened=chrome.sidePanel.open({windowId:tab.windowId});
+  void chrome.runtime.sendMessage({type:'panel:access',tabId:tab.id,windowId:tab.windowId}).catch(()=>false);
+  void opened.catch(()=>dashboard());
+});
+chrome.commands?.onCommand.addListener(command=>{if(command==='open-full-view') void dashboard();});
+// Highlight the toolbar icon on application pages without host access (declarativeContent).
+async function highlightRules() {
+  if(!chrome.declarativeContent) return;
+  const response=await fetch(chrome.runtime.getURL('icons/icon32.png'));
+  const bitmap=await createImageBitmap(await response.blob());
+  const canvas=new OffscreenCanvas(32,32), context=canvas.getContext('2d');
+  context.drawImage(bitmap,0,0,32,32);
+  context.fillStyle='#0a84ff';context.beginPath();context.arc(25,25,6,0,Math.PI*2);context.fill();
+  const imageData={32:context.getImageData(0,0,32,32)};
+  const hosts=['greenhouse.io','ashbyhq.com','lever.co','myworkdayjobs.com','myworkdaysite.com','smartrecruiters.com','workable.com'];
+  const conditions=[...hosts.map(hostSuffix=>new chrome.declarativeContent.PageStateMatcher({pageUrl:{hostSuffix,schemes:['https']}})),
+    new chrome.declarativeContent.PageStateMatcher({pageUrl:{schemes:['https']},css:['form input[type="file"]']})];
+  await chrome.declarativeContent.onPageChanged.removeRules(undefined);
+  await chrome.declarativeContent.onPageChanged.addRules([{conditions,actions:[new chrome.declarativeContent.SetIcon({imageData})]}]);
+}
+chrome.runtime.onInstalled.addListener(()=>{
+  void highlightRules().catch(()=>{});
+  void chrome.storage.local.remove('conveniencePassword');void chrome.storage.session.remove('conveniencePassword');
 });
 
 chrome.notifications.onClicked.addListener(id=>{
@@ -99,7 +115,14 @@ async function setTabState(tab,application,inspection) {
 async function pageMessage(message,sender) {
   if (sender.id!==chrome.runtime.id || sender.frameId!==0 || !sender.tab?.id || !httpUrl(sender.url) ||
     sender.url!==message.page && canonicalUrl(sender.url)!==canonicalUrl(message.page)) throw new Error('Invalid form sender.');
-  const state=await tabState(sender.tab.id);
+  let state=await tabState(sender.tab.id);
+  if (message.type==='page:intent' && (!state||state.expiresAt<=Date.now()) && message.job && message.job.provider!=='generic' &&
+      postingIdentity(sender.url) && message.job.company && message.job.title) {
+    // Submitting without Autofill still tracks the application (spec 6).
+    const {application}=await saveApplication({company:message.job.company,title:message.job.title,url:canonicalUrl(sender.url),
+      requisition:message.job.requisition,location:message.job.location,attribution:sourceFromReferrer(message.job.referrer,sender.url)},{stage:'Preparing'});
+    state=await setTabState(sender.tab.id,application,{page:sender.url,job:{provider:message.job.provider}});
+  }
   if (!state||state.expiresAt<=Date.now()||state.origin!==httpUrl(sender.url)?.origin) return null;
   if (message.type==='page:intent') {
     const app=await db.applications.get(state.appId);
@@ -107,6 +130,7 @@ async function pageMessage(message,sender) {
       canonicalUrl(state.url)!==canonicalUrl(sender.url)&&!postingIdentity(sender.url)) return null;
     const at=nowISO();
     await db.runtime.update(state.id,{intention:at});
+    await recordSubmission(app,message);
     return appendEvent({id:'submit-attempt:'+state.appId,applicationId:state.appId,kind:'needs-check',at,url:canonicalUrl(sender.url)});
   }
   if (message.type==='page:receipt' && state.intention && Date.now()-Date.parse(state.intention)<30*60_000) {
@@ -115,6 +139,23 @@ async function pageMessage(message,sender) {
     return appendEvent({id:'ats-receipt:'+state.appId,applicationId:state.appId,kind:'ats-receipt',stage:'Applied',at:nowISO(),...evidence});
   }
   return null;
+}
+const fileRef=async name=>{
+  const found=(await db.materials.filter(row=>row.name===name).toArray()).sort((a,b)=>b.revision-a.revision)[0];
+  return found?{id:found.parentId??found.id,name:found.name,label:found.label,revision:found.revision,hash:found.hash}:{name,external:true};
+};
+// Record hand-attached files and offer hand-typed answers for reuse.
+async function recordSubmission(app,message) {
+  const files=Array.isArray(message.files)?message.files.filter(file=>typeof file?.name==='string').slice(0,6):[];
+  const resumeFile=files.find(file=>!/cover/i.test(file.label)), coverFile=files.find(file=>/cover/i.test(file.label));
+  const materials={resume:app.materials?.resume??null,cover:app.materials?.cover??null};
+  let changed=false;
+  if(resumeFile&&materials.resume?.name!==resumeFile.name) {materials.resume=await fileRef(resumeFile.name);changed=true;}
+  if(coverFile&&materials.cover?.name!==coverFile.name) {materials.cover=await fileRef(coverFile.name);changed=true;}
+  if(changed) await appendEvent({id:uid(),applicationId:app.id,kind:'materials',at:nowISO(),materials});
+  const answers=(Array.isArray(message.answers)?message.answers:[]).filter(row=>typeof row?.question==='string'&&typeof row.value==='string').slice(0,40)
+    .map(({question,value,type,critical})=>({question:question.slice(0,300),value:value.slice(0,400),type:String(type??'').slice(0,40),critical:!!critical}));
+  if(answers.length) await db.runtime.put({id:'learn:'+app.id,kind:'learn',appId:app.id,answers,expiresAt:Date.now()+3*86_400_000});
 }
 chrome.tabs.onRemoved.addListener(id=>{opened.delete(id);void db.runtime.delete('form-tab:'+id);});
 chrome.tabs.onUpdated.addListener((id,change,tab)=>{
@@ -142,7 +183,7 @@ async function formContext(message,app) {
 }
 async function materialRefs(ids,result) {
   const entries=await db.materials.bulkGet([ids.resume||'',ids.cover||'']);
-  const reference = material=>material ? {id:material.id,name:material.name,revision:material.revision,hash:material.hash} : null;
+  const reference = material=>material ? {id:material.id,name:material.name,label:material.label,revision:material.revision,hash:material.hash} : null;
   const success=key=>entries[key]&&result.results.some(row=>row.state==='filled'&&(row.file===entries[key].name||key===1&&row.materialText));
   return {resume:success(0)?reference(entries[0]):null,cover:success(1)?reference(entries[1]):null};
 }
@@ -226,27 +267,15 @@ const handlers={
     return {connected:!!key};
   },
   'secret:registration':async message=>{
-    const email=message.email===undefined?undefined:String(message.email).trim();
-    const value=message.value===undefined?undefined:String(message.value);
+    const email=String(message.email??'').trim();
     if(email&&(email.length>254||!(/^[^\s@]+@[^\s@]+$/).test(email))) throw new Error('Enter a valid registration email.');
-    if(value?.length>256) throw new Error('The password is too long.');
-    if(value&&message.persist&&!message.consent) throw new Error('Confirm the local plaintext option explicitly.');
-    if(value) {
-      const target=message.persist?'local':'session';
-      await chrome.storage[target].set({conveniencePassword:value});
-      await chrome.storage[message.persist?'session':'local'].remove('conveniencePassword');
-    } else if(value==='') {
-      await Promise.all([chrome.storage.session.remove('conveniencePassword'),chrome.storage.local.remove('conveniencePassword')]);
-    }
-    if(email) await chrome.storage.local.set({registrationEmail:email});
-    else if(email==='') await chrome.storage.local.remove('registrationEmail');
+    if(email) await chrome.storage.local.set({registrationEmail:email});else await chrome.storage.local.remove('registrationEmail');
     return true;
   },
   'integrations:status':async ()=>{
-    const local=await chrome.storage.local.get(['claudeKey','conveniencePassword','registrationEmail']);
-    const session=await chrome.storage.session.get('conveniencePassword');
-    return {claude:!!local.claudeKey,password:!!(local.conveniencePassword||session.conveniencePassword),persistent:!!local.conveniencePassword,
-      registrationEmail:local.registrationEmail??'',gmailConfigured:!!chrome.runtime.getManifest().oauth2};
+    const local=await chrome.storage.local.get(['claudeKey','registrationEmail']);
+    return {claude:!!local.claudeKey,registrationEmail:local.registrationEmail??'',gmailConfigured:!!chrome.runtime.getManifest().oauth2,
+      atsAccess:await chrome.permissions.contains({origins:ATS_ORIGINS})};
   },
   'gmail:connect':async message=>{
     await getMailToken({interactive:true,modify:!!message.modify});
@@ -335,7 +364,7 @@ const handlers={
   'form:inspect':async message=>{
     const inspection=await sendForm(message.tabId,'inspect',{watch:!!message.watch},true);
     const {descriptionHtml,...job}=inspection.job;
-    inspection.job={...job,jd:descriptionHtml?plain(descriptionHtml)||job.jd:job.jd};
+    inspection.job={...job,jd:descriptionHtml?plain(descriptionHtml)||job.jd:job.jd,attribution:sourceFromReferrer(job.referrer,inspection.page)};
     if(inspection.embedded) {
       inspection.fields=[];
       inspection.embedAccess=await embeddedAccess(inspection.embedded);
@@ -369,7 +398,7 @@ const handlers={
       message.jobId ? (await db.jobs.get(message.jobId))?.url : message.job.url;
     const key=postingIdentity(page)?.key;
     const exact=canonicalUrl(page)===canonicalUrl(target) || !!key && key===postingIdentity(target)?.key;
-    const result=await saveApplication(message.job,{stage:'Preparing',jobId:message.jobId,existingId:message.existingId,
+    const result=await saveApplication(message.job,{stage:message.stage==='Saved'?'Saved':'Preparing',jobId:message.jobId,existingId:message.existingId,
       pageDescription:exact?message.inspection.job.jd:''});
     await setTabState(message.tabId,result.application,message.inspection);
     return result;
@@ -401,12 +430,18 @@ const handlers={
     if(!app) throw new Error('Prepare this application first.');
     await formContext(message,app);
     const config=await settings(), provider=await claudeFor(config,null);
-    if(!provider) throw new Error('Connect Claude in Profile.');
-    const fields=message.fields.filter(field=>!field.critical&&!field.consent&&!['password','file','radio','checkbox','skill-picker'].includes(field.type))
-      .slice(0,25).map(({id,label,options,type})=>({id,label:String(label).slice(0,240),type,options:options.slice(0,12)}));
+    if(!provider) throw new Error('Connect Claude in Settings.');
+    const fields=message.fields.filter(field=>!field.critical&&!field.consent&&!field.filled&&!['password','file','checkbox','skill-picker'].includes(field.type))
+      .slice(0,25).map(({id,label,options,type})=>({id,label:String(label).slice(0,240),type,options:(options??[]).slice(0,40).map(value=>String(value).slice(0,120))}));
     if(!fields.length) return [];
-    return message.draft?provider.draftAnswers({fields:fields.filter(field=>field.type==='textarea'),facts:relevantFacts(config.profile),role:app.title}):
-      provider.mapFields({fields,keys:message.keys});
+    const answers=(await db.answers.toArray()).slice(0,60).map(({question,value})=>({question:question.slice(0,200),value:value.slice(0,300)}));
+    const results=await provider.suggestAnswers({fields,facts:relevantFacts(config.profile),answers,role:{title:app.title,company:app.company}});
+    const byId=new Map(fields.map(field=>[field.id,field]));
+    // A choice answer must be one of the page's own options.
+    return results.filter(row=>{
+      const field=byId.get(row.id);
+      return field&&row.value&&(!field.options.length||field.options.includes(row.value));
+    });
   },
   'form:rows':async message=>{
     const app=await db.applications.get(message.applicationId);
@@ -416,13 +451,17 @@ const handlers={
     return sendForm(message.tabId,'rows',{revision:message.revision,url:message.page,
       counts:{experience:config.profile.experience?.length??0,education:config.profile.education?.length??0}});
   },
-  'form:advance':async message=>{
-    const app=await db.applications.get(message.applicationId);
-    if(!app||!(await settings()).advance) throw new Error('Enable reviewed Workday navigation in Profile.');
-    await formContext(message,app);
-    const next=await sendForm(message.tabId,'advance',{revision:message.revision,url:message.page});
-    await db.runtime.update('form-tab:'+message.tabId,{checkpoint:next.step});
-    return next;
+  'form:focus':async message=>{
+    await sameTab(message.tabId,message.page);
+    const result=await chrome.tabs.sendMessage(message.tabId,{type:'form:focus',id:message.id},message.documentId?{documentId:message.documentId}:{frameId:0});
+    if(!result?.ok) throw new Error(result?.error||'Scan again to find this field.');
+    return true;
+  },
+  'answers:save':async message=>{
+    let saved=0;
+    for(const row of (message.answers??[]).slice(0,40)) {await saveAnswer({question:row.question,value:row.value});saved++;}
+    await db.runtime.delete('learn:'+message.applicationId);
+    return saved;
   },
   'form:stop':message=>chrome.tabs.sendMessage(message.tabId,{type:'form:cancel'},message.documentId?{documentId:message.documentId}:{frameId:0}),
   'form:registration':async message=>{
@@ -432,18 +471,16 @@ const handlers={
     const app=await db.applications.get(message.applicationId);
     if(!app) throw new Error('Prepare this application first.');
     await formContext(message,app);
-    const [session,local,config]=await Promise.all([chrome.storage.session.get('conveniencePassword'),
-      chrome.storage.local.get(['conveniencePassword','registrationEmail']),settings()]);
-    const value=session.conveniencePassword||local.conveniencePassword;
+    const [local,config]=await Promise.all([chrome.storage.local.get('registrationEmail'),settings()]);
     const email=local.registrationEmail||config.profile.email;
-    if(!email&&!value) throw new Error('Set your registration credentials in Profile.');
-    return sendForm(message.tabId,'registration',{revision:message.revision,url:message.page,value,email});
+    if(!email) throw new Error('Add your email in Settings.');
+    return sendForm(message.tabId,'registration',{revision:message.revision,url:message.page,email});
   },
   'data:clear':async message=>{
     if(message.confirm!=='DELETE') throw new Error('Type DELETE to remove local MeshJob data.');
     await setMode('Finished');
     stopMail();
-    await Promise.all([chrome.storage.local.remove(['claudeKey','conveniencePassword','registrationEmail']),chrome.storage.session.remove('conveniencePassword'),disconnectMail(false)]);
+    await Promise.all([chrome.storage.local.remove(['claudeKey','registrationEmail']),disconnectMail(false)]);
     await db.transaction('rw',db.tables,async()=>{
       await Promise.all(db.tables.filter(table=>table!==db.settings).map(table=>table.clear()));
       const before=await settings();

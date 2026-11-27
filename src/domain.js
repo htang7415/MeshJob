@@ -19,6 +19,8 @@ const PRIVATE_QUERY = /^(?:access_token|id_token|refresh_token|sessionid|session
 const MEANINGFUL_QUERY = ['gh_jid', 'jobId', 'job_id', 'requisitionId'];
 const DENIED = /(^|\.)(linkedin\.com|jobright\.ai|simplify\.jobs|ycombinator\.com|workatastartup\.com|localhost|local|internal|test)$/i;
 
+export const ATS_ORIGINS = ['https://*.greenhouse.io/*','https://*.ashbyhq.com/*','https://*.lever.co/*','https://*.myworkdayjobs.com/*',
+  'https://*.myworkdaysite.com/*','https://*.smartrecruiters.com/*','https://*.workable.com/*'];
 export const nowISO = () => new Date().toISOString();
 export const trim = value => String(value ?? '').replace(/\s+/g, ' ').trim();
 export const normalized = value => trim(value).normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}]+/gu, ' ').replace(/\s+/g, ' ').trim();

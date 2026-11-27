@@ -72,7 +72,7 @@ async function pageData(tab) {
     const [applications,events]=await Promise.all([db.applications.toArray(),db.events.toArray()]);
     return {config,applications,events};
   }
-  const [materials,answers,health,usage]=await Promise.all([db.materials.toArray(),db.answers.toArray(),db.runtime.get('health:gmail'),db.usage.toArray()]);
+  const [materials,answers,health,usage]=await Promise.all([db.materials.filter(row=>!row.archived).toArray(),db.answers.toArray(),db.runtime.get('health:gmail'),db.usage.toArray()]);
   return {config,materials,answers,health,usage};
 }
 function updateHeader(config) {

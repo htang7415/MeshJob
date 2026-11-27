@@ -49,7 +49,12 @@ export async function storeMaterial({file,type,label,tags,text,id,signal}) {
   signal?.throwIfAborted();
   item.text=String(text ?? old?.text ?? '').slice(0,150000);
   item.label ||= item.name;
-  await db.transaction('rw',db.materials,db.jobs,async()=>{
+  await db.transaction('rw',db.materials,db.jobs,db.applications,async()=>{
+    if(file&&old?.blob) {
+      // Keep the exact PDF an application was sent with (spec 4, resume versions).
+      const used=await db.applications.filter(app=>[app.materials?.resume,app.materials?.cover].some(ref=>ref?.id===old.id&&ref.revision===old.revision)).count();
+      if(used) await db.materials.put({...old,id:old.id+'@'+old.revision,archived:true,parentId:old.id});
+    }
     await db.materials.put(item);
     await db.jobs.filter(job=>!!job.matchKey).modify(job=>{delete job.matchKey;delete job.match;});
   });
@@ -76,4 +81,14 @@ export async function removeMaterial(id) {
     if(config) await db.settings.put(config);
     await db.jobs.filter(job=>!!job.matchKey).modify(job=>{delete job.matchKey;delete job.match;});
   });
+}
+
+export const currentMaterials=rows=>rows.filter(row=>!row.archived);
+export const versionLabel=ref=>ref?(ref.label||ref.name)+(ref.revision?' · v'+ref.revision:'')+(ref.external?' · External':''):'';
+// The stored PDF for an application's reference: the current copy if the revision still matches, else the archived one.
+export async function materialFor(ref) {
+  if(!ref?.id) return null;
+  const current=await db.materials.get(ref.id);
+  if(current&&(!ref.revision||current.revision===ref.revision)) return current;
+  return (await db.materials.get(ref.id+'@'+ref.revision))??null;
 }

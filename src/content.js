@@ -1,5 +1,5 @@
 import { canonicalUrl, distinctValues, httpUrl, JOB_DESCRIPTION_LIMIT, normalized, trim, workdayEmployer, workdayTenant } from './domain.js';
-import { consentField, criticalField, fieldKey, greenhouseEmbed, receiptSignature, RECEIPT_SELECTORS, registrationEmailField } from './form-rules.js';
+import { cleanLabel, consentField, criticalField, fieldKey, greenhouseEmbed, learnable, pickOption, receiptSignature, RECEIPT_SELECTORS, registrationEmailField, requiredLabel } from './form-rules.js';
 
 (() => {
   if (globalThis.meshJobContentInstalled) return;
@@ -16,6 +16,7 @@ import { consentField, criticalField, fieldKey, greenhouseEmbed, receiptSignatur
   let lastReceipt;
   const expectedUrl = () => location.href;
   const names = new WeakMap();
+  const byMeshJob = new WeakSet();
   let counter = 0;
   const selector = 'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]),textarea,select,[role="combobox"]:not(input),[role="checkbox"],[role="radio"],[contenteditable="true"]';
   const first = (...selectors) => selectors.map(s=>doc.querySelector(s)).find(Boolean);
@@ -85,7 +86,7 @@ import { consentField, criticalField, fieldKey, greenhouseEmbed, receiptSignatur
       url:canonicalUrl(expectedUrl()),provider,title:trim(title).slice(0,240),company:trim(company).slice(0,160),
       requisition:trim(posting?.identifier?.value || first('[data-automation-id="jobReqId"]')?.textContent || custom.requisition).slice(0,120),
       location:trim(posting?.jobLocation?.address?.addressLocality || first('.location','[data-automation-id="locations"]')?.textContent || custom.location || (mongoListing&&first('h1 h3')?.textContent)).slice(0,240),
-      attribution:host,jd,descriptionHtml
+      referrer:doc.referrer,jd,descriptionHtml
     };
   }
   function groupOf(node) {
@@ -159,10 +160,11 @@ import { consentField, criticalField, fieldKey, greenhouseEmbed, receiptSignatur
       const id = fieldId(node);
       const name = node.name || node.getAttribute('data-automation-id') || node.id;
       const phrase = label+' '+name+' '+(type==='checkbox' ? trim(node.parentElement?.textContent).slice(0,250) : '');
+      label = cleanLabel(label);
       const row = {
         id,label,name,type,multiple:node.multiple===true,partial:type==='skill-picker'&&!!trim(node.value),group:groupOf(node),autocomplete:node.getAttribute('autocomplete')?.split(/\s+/).at(-1),
         required:node.required || node.getAttribute('aria-required')==='true' || node.closest('[data-required="true"]')!==null ||
-          radioOptions.some(current=>current.required) || /\*$/.test(label),
+          radioOptions.some(current=>current.required) || requiredLabel(label) || node.getAttribute('aria-invalid')==='true',
         critical:criticalField(phrase),consent:consentField(phrase),
         disabled:node.matches(':disabled,[aria-disabled="true"],[readonly]'),filled:valueExists(node,type),
         options:optionsOf(node,type).slice(0,180)
@@ -180,6 +182,47 @@ import { consentField, criticalField, fieldKey, greenhouseEmbed, receiptSignatur
     function stop(value){observer.disconnect();clearTimeout(timer);resolve(value);}
     observer.observe(doc.documentElement,{childList:true,characterData:true,subtree:true,attributes:true});
   });
+  // Wait until the page stops changing so newly revealed follow-up questions are scanned.
+  const settle = (quiet=300,limit=1500) => new Promise(resolve=>{
+    let timer;
+    const observer=new MutationObserver(()=>{clearTimeout(timer);timer=setTimeout(done,quiet);});
+    const cap=setTimeout(done,limit);
+    function done(){observer.disconnect();clearTimeout(timer);clearTimeout(cap);resolve();}
+    observer.observe(doc.documentElement,{childList:true,subtree:true,attributes:true});
+    timer=setTimeout(done,quiet);
+  });
+  function focusField(id) {
+    const node=fields.get(id)?.node;
+    if(!node?.isConnected) throw new Error('Scan again to find this field.');
+    node.scrollIntoView({block:'center',behavior:'smooth'});
+    node.focus({preventScroll:true});
+    const previous=node.style.outline;
+    node.style.outline='3px solid #0a84ff';
+    setTimeout(()=>{node.style.outline=previous;},1600);
+    return true;
+  }
+  function readValue(node,type) {
+    if (type==='radio') return trim(nativeLabel(radioNodes(node).find(input=>input.checked||input.getAttribute('aria-checked')==='true')??node));
+    if (type==='checkbox') return valueExists(node,type)?'Yes':'';
+    if (type==='select') return trim(node.selectedOptions?.[0]?.textContent);
+    if (type==='combobox'||node.tagName==='BUTTON') return trim(node.value||node.textContent);
+    if (node.isContentEditable) return trim(node.textContent);
+    return String(node.value??'').trim();
+  }
+  // At submit: what the user typed by hand and which files were attached, for tracking and answer reuse.
+  function submissionSnapshot() {
+    const rows=scan();
+    const answers=[];
+    const files=[];
+    for(const row of rows) {
+      const node=fields.get(row.id)?.node;
+      if(!node) continue;
+      if(row.type==='file') {for(const file of node.files??[]) files.push({label:row.label.slice(0,120),name:file.name.slice(0,254),size:file.size});continue;}
+      const entry={...row,value:readValue(node,row.type),byMeshJob:byMeshJob.has(node)};
+      if(learnable(entry)) answers.push({question:entry.label.slice(0,300),value:entry.value.slice(0,400),type:row.type,critical:!!row.critical});
+    }
+    return {answers:answers.slice(0,40),files:files.slice(0,6)};
+  }
   const safeClick = node => {
     if (!node || !visible(node) || node.closest('a') || node.matches(':disabled,[aria-disabled="true"],[type="submit"],[formaction]')) return false;
     if (node.tagName==='BUTTON' && node.form && node.type!=='button') return false;
@@ -205,13 +248,8 @@ import { consentField, criticalField, fieldKey, greenhouseEmbed, receiptSignatur
     throw new Error('Unsupported form control.');
   }
   function choose(nodes,value,label) {
-    const wanted = normalized(value);
-    const same = nodes.filter(node=>normalized(label(node))===wanted);
-    if (same.length===1) return same[0];
-    const aliases = {usa:['united states','united states of america','us'],us:['united states','united states of america','usa'],
-      uk:['united kingdom','great britain','gb'],gb:['united kingdom','great britain','uk']};
-    const found = nodes.filter(node=>(aliases[wanted]??[]).includes(normalized(label(node))));
-    return found.length===1 ? found[0] : null;
+    const index=pickOption(nodes.map(node=>trim(label(node))),value);
+    return index>=0?nodes[index]:null;
   }
   function decode(encoded) {
     return Uint8Array.from(atob(encoded),part=>part.charCodeAt(0));
@@ -365,31 +403,15 @@ import { consentField, criticalField, fieldKey, greenhouseEmbed, receiptSignatur
           const verify = await setField(node,row,entry);
           await Promise.resolve();
           const passing = verify() && node.validity?.valid!==false && node.getAttribute('aria-invalid')!=='true';
+          if (passing) byMeshJob.add(node);
           results.push({id:row.id,label:row.label,state:passing?'filled':'failed',file:passing?entry.file?.name:undefined,
             materialText:passing&&entry.authority==='reviewed'&&row.type==='textarea',error:passing?undefined:'The page did not retain or accept the value.'});
         } catch(error) {results.push({id:row.id,label:row.label,state:'failed',error:error.message});}
       }
+      await settle();
       const parsed = scan();
       const unresolved = parsed.filter(row=>row.required&&!row.disabled&&!row.filled);
       return {results,fields:parsed,unresolved,errors:validationErrors().length,duration:performance.now()-start,cancelled,challenge:hasChallenge()};
-    } finally {busy=false;}
-  }
-  async function advance(message) {
-    if (busy) throw new Error('Wait for the current form operation.');
-    if (message.url!==expectedUrl() || message.revision!==revision || providerOf()!=='workday') throw new Error('This step must be advanced manually.');
-    const state = blockers();
-    const step = normalized(getStep());
-    if (!/^(?:my information|my experience|application questions|additional questions|voluntary disclosures|self identification)$/.test(step) ||
-      state.login || state.challenge || state.registration || validationErrors().length ||
-      scan().some(field=>!field.disabled && ((field.required&&!field.filled)||field.consent||(field.critical&&!field.filled)))) throw new Error('Review this step in the page before continuing.');
-    const next = doc.querySelector('button[data-automation-id="bottom-navigation-next-button"],button[data-automation-id="continueButton"]');
-    if (!next || !/^(?:save and continue|next|continue)$/i.test(trim(next.textContent))) throw new Error('A recognizable non-final navigation button was not found.');
-    if ([...doc.querySelectorAll('button,input[type=submit]')].some(node=>visible(node)&&/^(?:submit|submit application|finish application|create account|apply now)$/i.test(trim(node.innerText || node.value)))) throw new Error('The page contains a final submission control.');
-    busy=true;
-    try {
-      if (!safeClick(next)) throw new Error('Advance using the employer page.');
-      await waitingFor(()=>normalized(getStep())!==step || validationErrors().length,1700);
-      return {step:getStep(),changed:normalized(getStep())!==step,errors:validationErrors().length};
     } finally {busy=false;}
   }
   async function prepareRows(message) {
@@ -413,32 +435,15 @@ import { consentField, criticalField, fieldKey, greenhouseEmbed, receiptSignatur
   }
   function fillRegistration(message) {
     if (busy || message.url!==expectedUrl() || message.revision!==revision || !blockers().registration || blockers().challenge ||
-      location.protocol!=='https:' || !/^(?:ashby|greenhouse|lever|workday)$/.test(providerOf())) throw new Error('Open a verified registration form before filling credentials.');
-    const passwords=[...doc.querySelectorAll('input[type=password]')].filter(visible);
-    const form=passwords[0]?.form;
-    if(!passwords.length||passwords.length>2||passwords.some(node=>node.form!==form)) {
-      throw new Error('Use the browser password manager on this form.');
-    }
-    const emails=visibleFields().filter(node=>node instanceof HTMLInputElement&&node.form===form&&
+      location.protocol!=='https:' || !/^(?:ashby|greenhouse|lever|workday)$/.test(providerOf())) throw new Error('Open a verified registration form before filling the email.');
+    const emails=visibleFields().filter(node=>node instanceof HTMLInputElement&&
       registrationEmailField({type:node.type,label:nativeLabel(node),name:node.name,autocomplete:node.autocomplete}));
-    const {email,value}=message;
-    if(emails.length>2) throw new Error('Use the browser password manager on this form.');
-    if(email&&value&&emails.some(node=>node.value&&node.value.toLowerCase()!==email.toLowerCase())) {
-      throw new Error('The registration form has a different email. Review it before filling the saved password.');
-    }
-    const writable=node=>!node.value&&!node.matches(':disabled,[aria-disabled="true"],[readonly]');
+    if(emails.length>2) throw new Error('Fill this registration form manually.');
     let count=0;
     for(const node of emails) {
-      if(email&&writable(node)) {
-        setNative(node,email);
-        if(node.value===email) count++;
-      }
-    }
-    if(value&&passwords.every(node=>(!node.value||node.value===value)&&/^(?:new-password)?$/.test(node.autocomplete)&&/\bpassword\b/i.test(nativeLabel(node)))) {
-      for(const node of passwords) {
-        if(!node.isConnected||!visible(node)||!writable(node)) continue;
-        setNative(node,value);
-        if(node.value===value) count++;
+      if(message.email&&!node.value&&!node.matches(':disabled,[aria-disabled="true"],[readonly]')) {
+        setNative(node,message.email);
+        if(node.value===message.email) count++;
       }
     }
     return {count};
@@ -461,7 +466,9 @@ import { consentField, criticalField, fieldKey, greenhouseEmbed, receiptSignatur
     if (!/^(?:submit(?: my| your| the)? application|submit|apply)$/.test(label) || Date.now()-lastIntentAt<150) return;
     lastIntentAt=Date.now();
     intent=true;
-    send({type:'page:intent'});
+    const job=readJob();
+    send({type:'page:intent',job:{url:job.url,provider:job.provider,title:job.title,company:job.company,requisition:job.requisition,location:job.location,referrer:job.referrer},
+      ...submissionSnapshot()});
     afterChange();
   }
   doc.addEventListener('submit',event=>{if(event.isTrusted)recordIntent(event.submitter);},true);
@@ -536,7 +543,7 @@ import { consentField, criticalField, fieldKey, greenhouseEmbed, receiptSignatur
         return {job:window===window.top?readJob():null,page,revision,fields:rows,step,...blockers(),intent,receipt:receipt(),embedded:embeddedForm()};
       }
       if (message.type==='form:fill') return fill(message);
-      if (message.type==='form:advance') return advance(message);
+      if (message.type==='form:focus') return focusField(message.id);
       if (message.type==='form:rows') return prepareRows(message);
       if (message.type==='form:registration') return fillRegistration(message);
       if (message.type==='form:cancel') {cancelled=true;return true;}

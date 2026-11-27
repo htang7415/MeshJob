@@ -24,6 +24,7 @@ const matchSchema = z.object({
 });
 const fieldSchema = z.object({fields:z.array(z.object({id:z.string(),key:z.string().nullable()})).max(35)});
 const draftSchema = z.object({answers:z.array(z.object({id:z.string(),answer:z.string().max(1600).nullable(),facts:z.array(z.string().max(240)).max(10)})).max(35)});
+const suggestSchema = z.object({answers:z.array(z.object({id:z.string(),value:z.string().max(1600).nullable(),basis:z.string().max(240)})).max(35)});
 const emailSchema = z.object({
   category:z.enum(['confirmation','rejection','update','assessment','interview','follow-up','offer','unknown']),
   urgent:z.boolean(),confidence:z.enum(['High','Medium','Low']),evidence:z.string().max(350)
@@ -119,6 +120,9 @@ export function newClaude({config,key,generation,fetcher=fetch,signal}) {
     draftAnswers:async payload => (await request('draft',
       'Draft only open-ended answers supported by supplied facts; if unsupported return null. Return {answers:[{id,answer,facts}]}. Never draft answers about eligibility, immigration, legal matters, or consent.',
       payload,draftSchema,{model:config.draftModel})).answers,
+    suggestAnswers:async payload => (await request('suggest',
+      'Suggest answers for unresolved application fields using only the supplied facts and saved answers. For a field with options, value must be exactly one of its options. Return {answers:[{id,value,basis}]} where basis names the fact used. Use null when facts do not support an answer. Never answer eligibility, immigration, legal, demographic or consent questions.',
+      payload,suggestSchema,{model:config.draftModel})).answers,
     classifyEmail:async payload => request('email',
       'Classify recruitment text conservatively. Return {category,urgent,confidence,evidence}. Categories: confirmation, rejection, update, assessment, interview, follow-up, offer, unknown. A plausible requested action is urgent even if ambiguous. Never infer account ownership, employer identity or deadlines.',
       payload,emailSchema)
@@ -136,7 +140,7 @@ export function relevantFacts(profile={}) {
 
 export async function evaluateCandidate(job,config,provider,generation) {
   if (!job.active || !job.jd || job.identityReview || !preferenceDecision(job,config.preferences).eligible) return null;
-  const rows = await db.materials.orderBy('id').toArray();
+  const rows = (await db.materials.orderBy('id').toArray()).filter(row=>!row.archived);
   const words=new Set(normalized(job.title+' '+job.jd.slice(0,8000)).split(' ').filter(word=>word.length>=4));
   const score=material=>new Set(normalized([material.label,...material.tags,material.text.slice(0,6000)].join(' ')).split(' ')
     .filter(word=>words.has(word))).size;
@@ -166,7 +170,7 @@ export async function evaluateCandidate(job,config,provider,generation) {
       const latest=await settings();
       if(latest.model!==config.model||JSON.stringify(latest.preferences)!==JSON.stringify(config.preferences)||
         JSON.stringify(relevantFacts(latest.profile))!==JSON.stringify(facts)) return;
-      const versions=(await db.materials.orderBy('id').toArray()).map(({id,revision})=>[id,revision]);
+      const versions=(await db.materials.orderBy('id').toArray()).filter(row=>!row.archived).map(({id,revision})=>[id,revision]);
       if(JSON.stringify(versions)!==JSON.stringify(rows.map(({id,revision})=>[id,revision]))) return;
       const current = await db.jobs.get(job.id);
       if (current?.jdHash === job.jdHash && current.active) await db.jobs.update(job.id,{match,matchKey:key});

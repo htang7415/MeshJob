@@ -57,6 +57,23 @@ test('a new board adds no backlog and a same-role relisting is a repost',async()
   const fresh=jobs.find(job=>job.externalId==='4');
   assert.equal(fresh.repost,false);assert.equal(freshness(fresh,24),'detected');
 });
+test('applications record level, source and the exact resume version they used',async()=>{
+  await db.sources.add(source);
+  await saveSnapshot(source,{items:[row(7,'Senior Data Analyst')]},0);
+  const job=(await db.jobs.toArray())[0];
+  const discovered=(await saveApplication(null,{jobId:job.id})).application;
+  assert.equal(discovered.source,'MeshJob · Example');assert.equal(discovered.seniority,'Senior');
+  const manual=(await saveApplication({...fixtureJob,url:'https://job-boards.greenhouse.io/acme/jobs/55',attribution:'job-boards.greenhouse.io'})).application;
+  assert.equal(manual.source,'Company site');
+  const {item}=await storeMaterial({file:new File(['%PDF-1.4\nA'],'resume.pdf',{type:'application/pdf'}),text:'v1',type:'resume',label:'ML resume'});
+  await appendEvent({id:'m',applicationId:manual.id,kind:'materials',materials:{resume:{id:item.id,name:item.name,label:item.label,revision:1,hash:item.hash}}});
+  await storeMaterial({id:item.id,file:new File(['%PDF-1.4\nB'],'resume.pdf',{type:'application/pdf'}),text:'v2',type:'resume',label:'ML resume'});
+  const {materialFor,versionLabel}=await import('../src/materials.js');
+  const used=await materialFor((await db.applications.get(manual.id)).materials.resume);
+  assert.equal(await used.blob.text(),'%PDF-1.4\nA');assert.equal(used.archived,true);
+  assert.equal((await db.materials.get(item.id)).revision,2);
+  assert.equal(versionLabel({label:'ML resume',revision:1}),'ML resume · v1');
+});
 test('manual tracking changes survive backups and deletion retains the job and mail deduplication',async()=>{
   const {application}=await saveApplication(fixtureJob,{stage:'Preparing'});
   const applicationId=application.id;

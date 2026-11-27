@@ -202,7 +202,7 @@ export const portableConfig = config=>configSchema.parse(config);
 const id=z.string().min(1).max(500);
 const date=z.string().refine(validDate);
 const publicLink=z.string().max(4000).refine(value=>!value||!!httpUrl(value));
-const materialRef=z.object({id:id.optional(),name:z.string().max(254),revision:z.number().int().positive().optional(),hash:z.string().optional()});
+const materialRef=z.object({id:id.optional(),name:z.string().max(254),label:z.string().max(200).optional(),revision:z.number().int().positive().optional(),hash:z.string().optional(),external:z.boolean().optional()});
 const refs=z.object({resume:materialRef.nullable().optional(),cover:materialRef.nullable().optional()});
 const textual=(keys,max=480)=>Object.fromEntries(keys.map(key=>[key,z.string().max(max).nullish()]));
 const dates=keys=>Object.fromEntries(keys.map(key=>[key,date.nullish()]));
@@ -245,7 +245,7 @@ const answer=z.object({
 });
 const material=z.object({
   id,name:z.string().max(254),type:z.enum(['resume','cover']),label:z.string().max(200),tags:listSetting,text:z.string().max(150000),
-  hash:z.string().regex(/^[a-f\d]{64}$/),revision:z.number().int().positive(),updatedAt:date
+  hash:z.string().regex(/^[a-f\d]{64}$/),revision:z.number().int().positive(),updatedAt:date,archived:z.boolean().optional(),parentId:id.optional()
 });
 const source=z.object({id:id.optional(),url:publicLink,name:z.string().max(150),provider:z.string().max(40),interval:z.number().int().min(10).max(1440),enabled:z.boolean(),permitted:z.boolean().optional()});
 const manifestSchema=z.object({format:z.literal('MeshJob'),version:z.literal(1),exportedAt:date,checksums:z.record(z.string(),z.string().regex(/^[a-f\d]{64}$/))});

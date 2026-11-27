@@ -178,3 +178,53 @@ export function receiptSignature({provider,marker,text,finalVisible}) {
   if (/\b(?:not submitted|not received|submission failed|error submitting|unable to submit|has not been submitted|application was saved|draft application|if you submit|unable to receive|will appear|expected application)\b/i.test(copy)) return null;
   return copy.match(/\b(?:application (?:has been |was |is |successfully )?(?:submitted|received|complete)|(?:received|submitted) your application|thank you for (?:submitting your application|applying))\b/i)?.[0]??null;
 }
+
+// Layered option matching (spec 5): exact → synonyms → Yes/No prefix → unique containment. Ambiguity fills nothing.
+const regionName=new Intl.DisplayNames(['en'],{type:'region'});
+const SYNONYMS=[
+  ['united states','united states of america','usa','us','u s','u s a','america'],['united kingdom','uk','u k','great britain','gb','england'],
+  ['south korea','korea','republic of korea','korea republic of'],['bachelor s degree','bachelor s','bachelors','bachelor','bs','ba','b s','b a','bsc','b sc','bachelor of science','bachelor of arts'],
+  ['master s degree','master s','masters','master','ms','ma','m s','m a','msc','m sc','master of science','master of arts'],
+  ['doctorate','phd','ph d','doctor of philosophy','doctoral degree'],['associate s degree','associate degree','associates','associate s'],
+  ['high school','high school diploma','ged','secondary school'],['prefer not to answer','decline to answer','i don t wish to answer','prefer not to say','decline to self identify','i decline to self identify']
+];
+const US_STATES={AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',CO:'Colorado',CT:'Connecticut',DE:'Delaware',DC:'District of Columbia',FL:'Florida',GA:'Georgia',
+  HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',
+  MS:'Mississippi',MO:'Missouri',MT:'Montana',NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',
+  OH:'Ohio',OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',VA:'Virginia',
+  WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',PR:'Puerto Rico',AB:'Alberta',BC:'British Columbia',MB:'Manitoba',NB:'New Brunswick',NL:'Newfoundland and Labrador',
+  NS:'Nova Scotia',ON:'Ontario',PE:'Prince Edward Island',QC:'Quebec',SK:'Saskatchewan'};
+for(const [code,name] of Object.entries(US_STATES)) SYNONYMS.push([normalized(name),code.toLowerCase()]);
+function variants(value) {
+  const key=normalized(value);
+  const out=new Set([key]);
+  for(const group of SYNONYMS) if(group.includes(key)) group.forEach(item=>out.add(item));
+  if(/^[a-z]{2}$/.test(key)) {
+    try { const name=regionName.of(key.toUpperCase()); if(name&&normalized(name)!==key) out.add(normalized(name)); } catch { /* Not a region code. */ }
+  }
+  return out;
+}
+const words=value=>' '+value+' ';
+export function pickOption(options,value) {
+  const labels=options.map(normalized);
+  const unique=indexes=>indexes.length===1?indexes[0]:-1;
+  const want=variants(value);
+  const exact=labels.flatMap((label,i)=>want.has(label)?[i]:[]);
+  if(exact.length) return unique(exact);
+  const key=normalized(value);
+  if(['yes','no'].includes(key)) {
+    const found=unique(labels.flatMap((label,i)=>label.startsWith(key+' ')?[i]:[]));
+    if(found>=0) return found;
+  }
+  const contained=labels.flatMap((label,i)=>[...want].some(item=>item.length>=3&&words(label).includes(words(item)))?[i]:[]);
+  return unique(contained);
+}
+export const requiredLabel=label=>/(?:[*✱]|\(required\))\s*$/i.test(String(label??'').trim());
+export const cleanLabel=label=>String(label??'').replace(/\s*(?:[*✱]|\(required\))\s*$/i,'').trim();
+
+// A hand-typed answer is worth offering to save when it is not a profile field, consent, password or file, and is short.
+export function learnable(row) {
+  if(!row.label||!row.value||row.byMeshJob||row.consent||['password','file','skill-picker'].includes(row.type)) return false;
+  if(fieldKey(row)||String(row.value).length>400||cleanLabel(row.label).length>300) return false;
+  return !structuredValue(row.value);
+}
