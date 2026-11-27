@@ -6,7 +6,7 @@ import { analyze, statsPeriod } from './stats.js';
 import { changeStage, deleteApplication, saveApplication, SOURCE_CHOICES, undoEvent } from './tracker.js';
 import { applicationCSV, csvPreview, eventsCSV, importApplicationCSV, jobsCSV, makeBackup, readSources, sourcePack, sourcesCSV } from './portability.js';
 import { blank,badge,button,check,dataTable,dateLabel,download,el,field,formDialog,input,link,paragraph,permit,readTokens,rpc,section,select,task,textarea,toast,tokenField } from './ui.js';
-import { profileView } from './profile.js';
+import { addMailDialog, profileView } from './profile.js';
 import { materialFor, versionLabel } from './materials.js';
 import { COUNTRY_OPTIONS, EMPLOYMENT_TYPES, LEVELS, normalizeLevels, PRIORITIES, regionOptions, WORKPLACE_TYPES } from './preferences.js';
 
@@ -458,7 +458,7 @@ function sourceImport() {
 function tracker(data) {
   return el('div',{},
     pageHead('Tracker',null,[
-      menu('More actions',[button('Import CSV',()=>applicationImport()),button('Export',()=>exportDialog(data))]),
+      menu('More actions',[button('Add email',addMailDialog),button('Import CSV',()=>applicationImport()),button('Export',()=>exportDialog(data))]),
       button('Add application',()=>applicationEditor(),'primary')
     ]),
     el('div',{class:'toolbar'},el('div',{class:'segmented','aria-label':'Tracker view'},[['table','Table'],['status','Status']].map(([key,label])=>button(label,event=>{

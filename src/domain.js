@@ -12,7 +12,7 @@ export const DEFAULTS = {
   mode: 'Active', generation: 0, onboarded: false, preferences: PREFERENCES, profile: {}, slots: SLOTS,
   searchesPerRound: 3, roundsPerDay: 2, budget: 10, dailyBudget: 2, runBudget: 0.15, autoMatch: true, dailySearch: true,
   model: 'claude-haiku-5-5', draftModel: 'claude-haiku-5-5', directAlerts: true,
-  gmail: false, markRead: false, gmailDays: 14, jdDays: 30, tombstoneDays: 180
+  gmail: false, mailProvider: 'gmail', markRead: false, gmailDays: 14, jdDays: 30, tombstoneDays: 180
 };
 const TRACKING = /^(utm_\w+|gh_src|lever-source|source|fbclid|gclid|ref_src)$/i;
 const PRIVATE_QUERY = /^(?:access_token|id_token|refresh_token|sessionid|session_id|candidateId|applicationToken|authToken|token)$/i;

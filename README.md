@@ -78,22 +78,19 @@ Sources are checked every 10 minutes while Chrome is running and search is Activ
 
 In **Settings → Claude**, set a personal API key and a monthly budget (default $10). **Match new jobs** scores new matching jobs against your profile and resumes. **Daily web search** looks for employers hiring for your roles once a day; MeshJob verifies each posting through the employer's ATS API, drops anything it cannot verify, and suggests unknown boards in Discover. In the Side Panel, **Suggest answers** proposes values for remaining fields from your profile and saved answers, limited to the page's own options; nothing is filled until you select it. Requests use structured outputs and low effort. Provider billing can differ from MeshJob's estimates. [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing)
 
-### Gmail
+### Email
 
-Gmail access is read-only (`gmail.readonly`); MeshJob never changes your mailbox. Any Gmail account works, including one that is not the account signed in to Chrome: **Settings → Gmail → Connect Gmail** opens Google's account chooser. MeshJob renews access in the background and asks you to reconnect only when Google requires it. **Switch account** moves to another mailbox. MeshJob reads only mail received after you connect a mailbox; earlier mail is never read.
+Email access is read-only, and MeshJob reads only mail received after you connect. Each user connects their own mailbox with their own free app, so there is no shared client, no user limit, and any account works, including one that is not signed in to Chrome. **Settings → Email** walks you through it in one dialog with direct links and a copy button:
 
-If your build includes a shared MeshJob client, **Connect Gmail** is all you need. Otherwise choose **Set up Gmail** and create your own client once, with no rebuild needed:
+- **Gmail**: enable the Gmail API, set up Google Auth Platform (audience External, then **Publish app**; the "unverified app" notice is normal for your own app), create a **Web application** OAuth client with the redirect URI MeshJob shows, and paste its Client ID.
+- **Outlook, Hotmail, Microsoft 365**: register an app for "any organization and personal Microsoft accounts" with a **Web** redirect URI MeshJob shows, tick **Access tokens** under Implicit grant, and paste its Application (client) ID. Work accounts may need an administrator to allow the app.
+- **Any other mailbox** (Yahoo, iCloud, QQ, 163 and other IMAP mail): browser extensions cannot connect to IMAP. Forward recruiting mail to your connected Gmail or Outlook, or use **Add email** (Tracker → ⋯, or Settings → Email) to paste a message or choose a saved `.eml` file.
 
-1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the Gmail API.
-2. Configure the OAuth consent screen as **External**, add the `gmail.readonly` scope, and **publish** the app. In Testing mode Google ends access after 7 days.
-3. Create an OAuth client ID of type **Web application**. Add the redirect URI shown in **Settings → Gmail → Advanced** (`https://<extension id>.chromiumapp.org/`).
-4. Paste the client ID in MeshJob and choose **Connect Gmail**.
-
-Maintainers can ship a shared client by putting a Web application client ID in `scripts/oauth-client-id.txt` (or `MESHJOB_OAUTH_CLIENT_ID`) before building; its redirect URI uses MeshJob's fixed extension ID. Until Google verifies the restricted Gmail scope, the consent screen says the app is unverified and an unverified project serves at most 100 accounts in total; beyond that, users add their own client as above. [Chrome launchWebAuthFlow](https://developer.chrome.com/docs/extensions/reference/api/identity#method-launchWebAuthFlow), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [Unverified apps](https://support.google.com/cloud/answer/7454865)
+Then choose **Save and connect** and pick your account. **Switch account** moves to another mailbox. [Chrome launchWebAuthFlow](https://developer.chrome.com/docs/extensions/reference/api/identity#method-launchWebAuthFlow), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [Microsoft Graph Mail.Read](https://learn.microsoft.com/en-us/graph/permissions-reference#mailread)
 
 ## Data and privacy
 
-MeshJob has no telemetry. Source requests go to the origins you grant. Autofill reads and writes form controls on the active HTTPS tab after you authorize an action. It leaves final submission, consent, and certification to you. PDFs are parsed locally, and only selected files are uploaded to the intended form. Claude receives relevant text and form cues when enabled. Gmail receives read-only requests for message headers and short excerpts. Only minimal tracking evidence is kept. Chrome notifications can show recruiting subject lines.
+MeshJob has no telemetry. Source requests go to the origins you grant. Autofill reads and writes form controls on the active HTTPS tab after you authorize an action. It leaves final submission, consent, and certification to you. PDFs are parsed locally, and only selected files are uploaded to the intended form. Claude receives relevant text and form cues when enabled. Gmail or Microsoft Graph receives read-only requests for message headers and short excerpts. Only minimal tracking evidence is kept. Chrome notifications can show recruiting subject lines.
 
 Permissions used by default cover the toolbar and Side Panel, the active tab and scripted form access, local storage, scheduled checks, notifications, and URL rules that highlight the toolbar icon on application pages. Specific site origins and Chrome Identity are requested when needed. Chrome stores the Claude key in local plaintext accessible to trusted extension contexts. MeshJob does not store account passwords. Prefer Chrome Password Manager with a unique password per site. Credentials and raw mailbox data are excluded from backups.
 

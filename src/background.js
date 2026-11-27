@@ -2,7 +2,7 @@ import { db, guarded, settings, updateSettings } from './db.js';
 import { CATALOG } from './catalog.js';
 import { ATS_ORIGINS, canonicalUrl, httpUrl, list, nowISO, publicUrl, sponsorshipEvidence, uid } from './domain.js';
 import { greenhouseEmbed } from './form-rules.js';
-import { CLIENT_ID, disconnectMail, getMailToken, gmailClient, gmailHttp, redirectUri, shippedClient } from './mail.js';
+import { addMail, disconnectMail, getMailToken, gmailHttp, graphHttp, MAIL_PROVIDERS, mailClient, redirectUri } from './mail.js';
 import { portableConfig } from './portability.js';
 import { candidateDetails } from './discovery.js';
 import { evaluateCandidate, matchPreferences, relevantFacts } from './intelligence.js';
@@ -275,47 +275,55 @@ const handlers={
     return true;
   },
   'integrations:status':async ()=>{
-    const local=await chrome.storage.local.get(['claudeKey','registrationEmail','gmailAccount','gmailClientId']);
-    return {claude:!!local.claudeKey,registrationEmail:local.registrationEmail??'',gmailConfigured:!!await gmailClient(),gmailShipped:!!shippedClient(),
-      gmailAccount:local.gmailAccount??'',gmailClientId:local.gmailClientId??'',gmailRedirect:redirectUri(),extensionId:chrome.runtime.id,
+    const local=await chrome.storage.local.get(['claudeKey','registrationEmail','mailAccount','gmailClientId','outlookClientId']);
+    return {claude:!!local.claudeKey,registrationEmail:local.registrationEmail??'',mailAccount:local.mailAccount??'',
+      clients:{gmail:local.gmailClientId??'',outlook:local.outlookClientId??''},mailRedirect:redirectUri(),extensionId:chrome.runtime.id,
       atsAccess:await chrome.permissions.contains({origins:ATS_ORIGINS})};
   },
-  'gmail:connect':async ()=>{
-    const token=await getMailToken({interactive:true});
-    const profile=await gmailHttp(token)('/profile');
-    const account=typeof profile.emailAddress==='string'?profile.emailAddress.slice(0,254):'';
-    const {gmailAccount}=await chrome.storage.local.get('gmailAccount');
-    await chrome.storage.local.set({gmailAccount:account});
+  'mail:connect':async message=>{
+    const provider=MAIL_PROVIDERS[message.provider]?message.provider:'gmail';
+    const token=await getMailToken({provider,interactive:true});
+    const account=provider==='outlook'?await graphHttp(token)('/me?$select=mail,userPrincipalName').then(me=>me.mail||me.userPrincipalName):
+      (await gmailHttp(token)('/profile')).emailAddress;
+    const address=typeof account==='string'?account.slice(0,254):'';
+    const {mailAccount}=await chrome.storage.local.get('mailAccount');
+    await chrome.storage.local.set({mailAccount:address});
     const previous=await settings();
-    // A different mailbox starts a fresh cursor.
-    const fresh=!previous.gmail||gmailAccount!==account;
-    if(fresh) await db.runtime.delete('gmail-cursor');
-    // Reading starts at connection time; reconnecting the same mailbox keeps its start.
-    await updateSettings({gmail:true,markRead:false,...(fresh||!previous.gmailSince?{gmailSince:nowISO()}:{})});
+    // A different mailbox starts fresh: new cursor and reading from now on; reconnecting the same one keeps its start.
+    const fresh=!previous.gmail||mailAccount!==address||previous.mailProvider!==provider;
+    if(fresh) await db.runtime.bulkDelete(['gmail-cursor','outlook-cursor']);
+    await updateSettings({gmail:true,mailProvider:provider,markRead:false,...(fresh||!previous.gmailSince?{gmailSince:nowISO()}:{})});
     void tick().catch(()=>{});
-    return true;
+    return {account:address};
   },
-  'gmail:disconnect':async message=>{
+  'mail:disconnect':async message=>{
     stopMail();
     const previous=await settings();
-    try { await disconnectMail(!!message.revoke); }
+    try { await disconnectMail(!!message.revoke,previous.mailProvider); }
     finally {
       await updateSettings({gmail:false,gmailSince:null});
-      await db.transaction('rw',db.runtime,db.events,async()=>{
-        await db.runtime.bulkDelete(['gmail-cursor','health:gmail']);
-        await db.events.filter(event=>event.pendingRead).modify({pendingRead:false});
-      });
+      await db.runtime.bulkDelete(['gmail-cursor','outlook-cursor','health:gmail']);
     }
     return previous.gmail;
   },
-  'gmail:sync':message=>recordManualRun('gmail',message.op),
-  'gmail:client':async message=>{
+  'mail:client':async message=>{
+    const spec=MAIL_PROVIDERS[message.provider];
+    if(!spec) throw new Error('Choose Gmail or Outlook.');
     const id=String(message.clientId??'').trim();
-    if(id&&!CLIENT_ID.test(id)) throw new Error('Enter a Google OAuth client ID ending in .apps.googleusercontent.com.');
-    if(id) await chrome.storage.local.set({gmailClientId:id});else await chrome.storage.local.remove('gmailClientId');
-    await chrome.storage.session.remove('gmailToken');
+    if(id&&!spec.client.test(id)) throw new Error(message.provider==='gmail'?'Enter a Google client ID ending in .apps.googleusercontent.com.':'Enter the Application (client) ID, a 36-character ID with dashes.');
+    if(id) await chrome.storage.local.set({[message.provider+'ClientId']:id});else await chrome.storage.local.remove(message.provider+'ClientId');
+    await chrome.storage.session.remove('mailToken');
     return true;
   },
+  'mail:add':async message=>{
+    const config=await settings();
+    const ai=await claudeFor(config,null).catch(()=>null);
+    const result=await addMail(String(message.text??''),{ai});
+    await notifyUrgent(null);
+    return {duplicate:!!result.duplicate,category:result.event?.category,urgent:!!result.event?.urgent,
+      linked:result.application?result.application.company+' · '+result.application.title:null};
+  },
+  'gmail:sync':message=>recordManualRun('gmail',message.op),
   'search:now':message=>recordManualRun('search',message.op),
   'notification:test':()=>testNotification(),
   'action:status':async message=>{

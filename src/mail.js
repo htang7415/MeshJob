@@ -1,5 +1,5 @@
 import { claim, db, guarded, release, settings } from './db.js';
-import { httpUrl, normalized, nowISO, trim } from './domain.js';
+import { hash, httpUrl, normalized, nowISO, trim } from './domain.js';
 import { appendEvent } from './tracker.js';
 
 export const MAIL_ORIGINS = ['https://gmail.googleapis.com/*','https://oauth2.googleapis.com/*'];
@@ -72,80 +72,90 @@ function deadlineOf(copy) {
 }
 export const mailLink=(id,account)=>'https://mail.google.com/mail/'+(account?'?authuser='+encodeURIComponent(account):'u/0/')+'#all/'+encodeURIComponent(id);
 export function mailEvent(mail,classification,app,account) {
+  const provider = mail.provider ?? 'gmail';
   const stages = {confirmation:'Applied',rejection:'Rejected',assessment:'OA',interview:'Interview',offer:'Offer'};
   const trusted = !!app && classification.confidence === 'High';
   return {
-    id:'gmail:'+mail.id,messageId:mail.id,threadId:mail.threadId,applicationId:trusted ? app.id : undefined,at:mail.at,
+    id:provider+':'+mail.id,messageId:mail.id,threadId:mail.threadId,applicationId:trusted ? app.id : undefined,at:mail.at,
     kind:trusted && classification.category === 'confirmation' ? 'email-confirmation' : 'email',
     stage:trusted ? stages[classification.category] : undefined,category:classification.category,
-    subject:mail.subject,excerpt:mail.snippet.slice(0,360),url:mailLink(mail.id,account),
-    urgent:classification.urgent,review:!trusted && (classification.urgent || classification.category !== 'unknown'),
+    subject:mail.subject,excerpt:mail.snippet.slice(0,360),url:mail.link ?? (provider==='gmail' ? mailLink(mail.id,account) : undefined),
+    urgent:classification.urgent,review:!trusted && (classification.urgent || classification.category !== 'unknown' || provider==='manual'),
     deadline:classification.urgent ? deadlineOf(mail.subject+' '+mail.snippet) : null
   };
 }
 
-// Gmail sign-in works for any Google account, independent of the account signed in to Chrome (spec 7):
-// chrome.identity.launchWebAuthFlow with a Web OAuth client whose redirect URI is this extension's chromiumapp.org URL.
-/* global __MESHJOB_GOOGLE_CLIENT__ */
-const SHIPPED_CLIENT = typeof __MESHJOB_GOOGLE_CLIENT__ === 'string' ? __MESHJOB_GOOGLE_CLIENT__ : '';
-export const CLIENT_ID = /^[\w-]{6,120}\.apps\.googleusercontent\.com$/;
-export const shippedClient = () => SHIPPED_CLIENT;
-export async function gmailClient() {
-  const {gmailClientId} = await chrome.storage.local.get('gmailClientId');
-  return CLIENT_ID.test(gmailClientId ?? '') ? gmailClientId : CLIENT_ID.test(SHIPPED_CLIENT) ? SHIPPED_CLIENT : '';
+// Each user connects a mailbox with their own OAuth app (spec 7): no shared client, no user cap, any account.
+// chrome.identity.launchWebAuthFlow returns an access token to https://<extension id>.chromiumapp.org/.
+export const MAIL_PROVIDERS = {
+  gmail:{label:'Gmail',authorize:'https://accounts.google.com/o/oauth2/v2/auth',scope:MAIL_SCOPE,required:[MAIL_SCOPE],
+    origins:['https://gmail.googleapis.com/*','https://oauth2.googleapis.com/*'],client:/^[\w-]{6,120}\.apps\.googleusercontent\.com$/,extra:{include_granted_scopes:'true'}},
+  outlook:{label:'Outlook',authorize:'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+    scope:'https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read',required:['Mail.Read'],
+    origins:['https://graph.microsoft.com/*'],client:/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i,extra:{response_mode:'fragment'}}
+};
+export const CLIENT_ID = MAIL_PROVIDERS.gmail.client;
+const providerOf = name => MAIL_PROVIDERS[name] ?? MAIL_PROVIDERS.gmail;
+export async function mailClient(provider) {
+  const key = provider+'ClientId';
+  const value = (await chrome.storage.local.get(key))[key];
+  return providerOf(provider).client.test(value ?? '') ? value : '';
 }
 export const redirectUri = (id = chrome.runtime.id) => 'https://' + id + '.chromiumapp.org/';
-export function authUrl({clientId,redirect,interactive,account,state}) {
-  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-  for (const [key,value] of Object.entries({client_id:clientId,redirect_uri:redirect,response_type:'token',scope:MAIL_SCOPE,
-    include_granted_scopes:'true',state,prompt:interactive?'select_account':'none',...(account?{login_hint:account}:{})})) url.searchParams.set(key,value);
+export function authUrl({provider='gmail',clientId,redirect,interactive,account,state}) {
+  const spec = providerOf(provider);
+  const url = new URL(spec.authorize);
+  for (const [key,value] of Object.entries({client_id:clientId,redirect_uri:redirect,response_type:'token',scope:spec.scope,
+    state,prompt:interactive?'select_account':'none',...spec.extra,...(account?{login_hint:account}:{})})) url.searchParams.set(key,value);
   return url.href;
 }
-export function parseRedirect(responseUrl,state,redirect) {
-  if (typeof responseUrl !== 'string' || !responseUrl.startsWith(redirect)) throw new Error('Google returned an unexpected sign-in response.');
+export function parseRedirect(responseUrl,state,redirect,provider='gmail') {
+  if (typeof responseUrl !== 'string' || !responseUrl.startsWith(redirect)) throw new Error('The sign-in returned an unexpected response.');
   const values = new URLSearchParams(new URL(responseUrl).hash.slice(1));
-  if (values.get('error')) throw new Error(values.get('error')==='access_denied'?'Gmail access was not granted.':'Gmail sign-in needs you to reconnect.');
-  if (values.get('state') !== state) throw new Error('Gmail sign-in state did not match.');
+  if (values.get('error')) throw new Error(values.get('error')==='access_denied'?'Mail access was not granted.':'Mail sign-in needs you to reconnect.');
+  if (values.get('state') !== state) throw new Error('Mail sign-in state did not match.');
   const token = values.get('access_token'), seconds = Number(values.get('expires_in'));
-  if (!token || !Number.isFinite(seconds) || !String(values.get('scope') ?? '').split(' ').includes(MAIL_SCOPE)) throw new Error('Gmail read access was not granted.');
+  const scopes = String(values.get('scope') ?? '').split(' ');
+  const granted = providerOf(provider).required.every(need=>scopes.some(scope=>scope===need||scope.endsWith('/'+need)));
+  if (!token || !Number.isFinite(seconds) || !granted) throw new Error('Mail read access was not granted.');
   return {token,expiresAt:Date.now()+seconds*1000};
 }
-export async function getMailToken({interactive=false}={}) {
-  const clientId = await gmailClient();
-  if (!clientId) throw new Error('Set up Gmail in Settings first.');
-  const granted = await chrome.permissions.contains({permissions:['identity'],origins:MAIL_ORIGINS});
-  if (!granted) throw new Error('Gmail permissions are missing. Connect Gmail again in Settings.');
-  const {gmailToken} = await chrome.storage.session.get('gmailToken');
-  if (!interactive && gmailToken?.clientId === clientId && gmailToken.expiresAt > Date.now()+60_000) return gmailToken.token;
-  const {gmailAccount} = await chrome.storage.local.get('gmailAccount');
-  if (!interactive && !gmailAccount) throw new Error('Reconnect Gmail in Settings.');
+export async function getMailToken({provider='gmail',interactive=false}={}) {
+  const clientId = await mailClient(provider);
+  if (!clientId) throw new Error('Set up your '+providerOf(provider).label+' app in Settings first.');
+  const granted = await chrome.permissions.contains({permissions:['identity'],origins:providerOf(provider).origins});
+  if (!granted) throw new Error('Mail permissions are missing. Connect your email again in Settings.');
+  const {mailToken} = await chrome.storage.session.get('mailToken');
+  if (!interactive && mailToken?.clientId === clientId && mailToken.expiresAt > Date.now()+60_000) return mailToken.token;
+  const {mailAccount} = await chrome.storage.local.get('mailAccount');
+  if (!interactive && !mailAccount) throw new Error('Reconnect your email in Settings.');
   const redirect = redirectUri(), state = crypto.randomUUID();
   let response;
   try {
-    response = await chrome.identity.launchWebAuthFlow({url:authUrl({clientId,redirect,interactive,account:interactive?'':gmailAccount,state}),interactive,
+    response = await chrome.identity.launchWebAuthFlow({url:authUrl({provider,clientId,redirect,interactive,account:interactive?'':mailAccount,state}),interactive,
       ...(interactive ? {} : {abortOnLoadForNonInteractive:false,timeoutMsForNonInteractive:10_000})});
   } catch {
-    throw new Error(interactive ? 'Gmail sign-in was cancelled.' : 'Google needs you to sign in again. Reconnect Gmail in Settings.');
+    throw new Error(interactive ? 'Sign-in was cancelled.' : 'Your mail provider needs you to sign in again. Reconnect in Settings.');
   }
-  const result = parseRedirect(response,state,redirect);
-  await chrome.storage.session.set({gmailToken:{...result,clientId}});
+  const result = parseRedirect(response,state,redirect,provider);
+  await chrome.storage.session.set({mailToken:{...result,clientId}});
   return result.token;
 }
-export async function disconnectMail(revoke=false) {
-  const {gmailToken} = await chrome.storage.session.get('gmailToken');
-  if (revoke && gmailToken?.token) {
+export async function disconnectMail(revoke=false,provider='gmail') {
+  const {mailToken} = await chrome.storage.session.get('mailToken');
+  if (revoke && provider==='gmail' && mailToken?.token) {
     const response = await fetch('https://oauth2.googleapis.com/revoke',{
       method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body:new URLSearchParams({token:gmailToken.token}),credentials:'omit',redirect:'error',signal:AbortSignal.timeout(8000)
+      body:new URLSearchParams({token:mailToken.token}),credentials:'omit',redirect:'error',signal:AbortSignal.timeout(8000)
     });
     if (!response.ok) throw new Error('Google rejected token revocation. Remove access in your Google Account.');
   }
-  await chrome.storage.session.remove('gmailToken');
-  await chrome.storage.local.remove('gmailAccount');
+  await chrome.storage.session.remove('mailToken');
+  await chrome.storage.local.remove('mailAccount');
 }
 
 class MailError extends Error {
-  constructor(status) { super('Gmail returned HTTP '+status); this.status=status; }
+  constructor(status) { super('Mail server returned HTTP '+status); this.status=status; }
 }
 export function gmailHttp(token,signal,fetcher=fetch) {
   return async (path,{query={},body}={}) => {
@@ -184,13 +194,34 @@ async function saveCursor(checkpoint,generation) {
   return guarded(generation,[db.runtime],()=>db.runtime.put({id:'gmail-cursor',kind:'gmail',...checkpoint}));
 }
 
-export async function syncMail({config,generation,signal,notify,api,ai}) {
-  if (!config.gmail) throw new Error('Connect Gmail in Profile.');
+// Shared by every mailbox and by manually added mail: classify, link conservatively, record minimal evidence.
+async function recordMail(message,{apps,ai,account,generation}) {
+  let classification = classifyMail(message);
+  if (ai && classification.category === 'unknown' && classification.urgent) {
+    try {
+      const extra = await ai.classifyEmail({subject:message.subject,snippet:message.snippet.slice(0,460)});
+      if (extra.urgent && !['confirmation','rejection','update'].includes(extra.category)) classification = {...classification,category:extra.category};
+    } catch { /* Retain the local urgent decision. */ }
+  }
+  if (classification.category === 'unknown' && !classification.urgent && message.provider!=='manual') return null;
+  const thread = await db.events.where('threadId').equals(message.threadId).toArray();
+  const app = linkMail(message,apps,thread);
+  const event = mailEvent(message,classification,app,account);
+  const result = await appendEvent(event,generation);
+  return result?.event ? {event,application:result.application??null} : null;
+}
+const mailSince = config => Number.isFinite(Date.parse(config.gmailSince)) ? Date.parse(config.gmailSince) : Date.now()-14*86400000;
+
+export async function syncMail(options) {
+  return options.config.mailProvider==='outlook' ? syncOutlook(options) : syncGmail(options);
+}
+async function syncGmail({config,generation,signal,notify,api,ai}) {
+  if (!config.gmail) throw new Error('Connect your email in Settings.');
   const lease = await claim('run:gmail','lease',4*60_000,generation);
   if (!lease) return;
   let accepted = 0, urgent = 0;
   try {
-    const token = api ? null : await getMailToken();
+    const token = api ? null : await getMailToken({provider:'gmail'});
     const request = api ?? gmailHttp(token,signal);
     async function check() {
       signal?.throwIfAborted();
@@ -199,7 +230,7 @@ export async function syncMail({config,generation,signal,notify,api,ai}) {
       return current;
     }
     // Only mail received after the mailbox was connected is read (spec 7); older mail is never fetched.
-    const since = Number.isFinite(Date.parse(config.gmailSince)) ? Date.parse(config.gmailSince) : Date.now()-14*86400000;
+    const since = mailSince(config);
     async function processIds(ids) {
       const apps = await db.applications.toArray();
       for (const id of [...new Set(ids)].filter(value=>MAIL_ID.test(value ?? ''))) {
@@ -209,21 +240,10 @@ export async function syncMail({config,generation,signal,notify,api,ai}) {
         try { message = normalizeMail(await request('/messages/'+encodeURIComponent(id),{query:{format:'full',fields:'id,threadId,internalDate,payload/headers,snippet,labelIds'}})); }
         catch (error) { if (error.status===404) continue; throw error; }
         if (message.excluded || Date.parse(message.at) < since) continue;
-        let classification = classifyMail(message);
-        if (ai && classification.category === 'unknown' && classification.urgent) {
-          try {
-            const extra = await ai.classifyEmail({subject:message.subject,snippet:message.snippet.slice(0,460)});
-            if (extra.urgent && !['confirmation','rejection','update'].includes(extra.category)) classification = {...classification,category:extra.category};
-          } catch { /* Retain the local urgent decision. */ }
-        }
-        if (classification.category === 'unknown' && !classification.urgent) continue;
-        const thread = await db.events.where('threadId').equals(message.threadId).toArray();
-        const app = linkMail(message,apps,thread);
-        const event = mailEvent(message,classification,app,state?.account);
-        const result = await appendEvent(event,generation);
-        if (result?.event) {
+        const recorded = await recordMail(message,{apps,ai,account:state?.account,generation});
+        if (recorded) {
           accepted++;
-          if (event.urgent) urgent++;
+          if (recorded.event.urgent) urgent++;
         }
       }
     }
@@ -261,4 +281,109 @@ export async function syncMail({config,generation,signal,notify,api,ai}) {
     if (notify) await notify(generation);
     return {accepted,urgent,hasMore:!!state?.pageToken};
   } finally { await release('run:gmail',lease); }
+}
+
+// Outlook, Hotmail and Microsoft 365 through Microsoft Graph (read-only).
+export function graphHttp(token,signal,fetcher=fetch) {
+  return async path => {
+    const url = path.startsWith('https://graph.microsoft.com/') ? path : 'https://graph.microsoft.com/v1.0'+path;
+    if (!url.startsWith('https://graph.microsoft.com/v1.0/')) throw new Error('Unexpected Microsoft Graph address.');
+    const timeout = AbortSignal.timeout(12000);
+    const response = await fetcher(url,{headers:{Authorization:'Bearer '+token},credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',
+      signal:signal?AbortSignal.any([signal,timeout]):timeout});
+    if (!response.ok) throw new MailError(response.status);
+    return response.json();
+  };
+}
+const shortId = async value => 'o'+(await hash(String(value))).slice(0,40);
+export async function outlookMessage(row) {
+  if (typeof row?.id !== 'string' || !row.receivedDateTime) throw new Error('Invalid Outlook message.');
+  const sender = row.from?.emailAddress ?? {};
+  return {provider:'outlook',id:await shortId(row.id),threadId:await shortId(row.conversationId ?? row.id),at:new Date(row.receivedDateTime).toISOString(),
+    from:trim([sender.name,sender.address&&'<'+sender.address+'>'].filter(Boolean).join(' ')),subject:trim(row.subject).slice(0,250),
+    snippet:trim(row.bodyPreview).slice(0,800),unread:row.isRead===false,link:httpUrl(row.webLink)?.protocol==='https:'?row.webLink:undefined};
+}
+async function syncOutlook({config,generation,signal,notify,api,ai}) {
+  if (!config.gmail) throw new Error('Connect your email in Settings.');
+  const lease = await claim('run:gmail','lease',4*60_000,generation);
+  if (!lease) return;
+  let accepted = 0, urgent = 0, next = null;
+  try {
+    const request = api ?? graphHttp(await getMailToken({provider:'outlook'}),signal);
+    const check = async () => {
+      signal?.throwIfAborted();
+      const current = await settings();
+      if (!current.gmail || (generation != null && (current.generation !== generation || current.mode !== 'Active'))) throw new Error('Mail sync cancelled.');
+    };
+    const state = (await db.runtime.get('outlook-cursor')) ?? {};
+    const since = new Date(Math.max(mailSince(config),Date.parse(state.after ?? '') || 0)).toISOString();
+    const select = 'id,conversationId,subject,from,bodyPreview,receivedDateTime,isRead,webLink';
+    next = state.nextLink ?? '/me/mailFolders/inbox/messages?$filter='+encodeURIComponent('receivedDateTime ge '+since)+
+      '&$orderby=receivedDateTime asc&$top=50&$select='+select;
+    let after = state.after;
+    for (let page=0; page<3 && next; page++) {
+      await check();
+      const batch = await request(next);
+      const apps = await db.applications.toArray();
+      for (const row of batch.value ?? []) {
+        await check();
+        const message = await outlookMessage(row);
+        after = message.at;
+        if (Date.parse(message.at) < mailSince(config) || await db.events.where('messageId').equals(message.id).first()) continue;
+        const recorded = await recordMail(message,{apps,ai,generation});
+        if (recorded) { accepted++; if (recorded.event.urgent) urgent++; }
+      }
+      next = typeof batch['@odata.nextLink'] === 'string' ? batch['@odata.nextLink'] : null;
+      await guarded(generation,[db.runtime],()=>db.runtime.put({id:'outlook-cursor',kind:'gmail',after,nextLink:next}));
+    }
+    await check();
+    if (notify) await notify(generation);
+    return {accepted,urgent,hasMore:!!next};
+  } finally { await release('run:gmail',lease); }
+}
+
+// Any other mailbox: paste a message or drop a saved .eml file (spec 7).
+function decodePart(body,encoding) {
+  if (/base64/i.test(encoding ?? '')) {
+    try { return new TextDecoder().decode(Uint8Array.from(atob(body.replace(/\s+/g,'')),c=>c.charCodeAt(0))); } catch { return body; }
+  }
+  if (/quoted-printable/i.test(encoding ?? '')) {
+    const bytes = body.replace(/=\r?\n/g,'').replace(/=([\dA-F]{2})/gi,(_,hex)=>String.fromCharCode(parseInt(hex,16)));
+    try { return new TextDecoder().decode(Uint8Array.from(bytes,c=>c.charCodeAt(0))); } catch { return bytes; }
+  }
+  return body;
+}
+export function parseMailText(raw) {
+  const text = String(raw ?? '').replace(/\r\n/g,'\n').slice(0,2_000_000);
+  const split = text.indexOf('\n\n');
+  const headBlock = split > 0 ? text.slice(0,split) : '';
+  const headers = {};
+  if (/^(?:[\w-]+:.*(?:\n[ \t].*)*\n?)+$/.test(headBlock) && /^(?:subject|from|date|received|message-id|mime-version):/im.test(headBlock)) {
+    for (const [,name,value] of headBlock.replace(/\n[ \t]+/g,' ').matchAll(/^([\w-]+):\s*(.*)$/gm)) headers[name.toLowerCase()] ??= value;
+  }
+  let body = Object.keys(headers).length ? text.slice(split+2) : text;
+  const boundary = /boundary="?([^";]+)"?/i.exec(headers['content-type'] ?? '')?.[1];
+  if (boundary) {
+    const part = body.split('--'+boundary).find(chunk=>/content-type:\s*text\/plain/i.test(chunk)) ?? body.split('--'+boundary).find(chunk=>/content-type:\s*text\/html/i.test(chunk));
+    if (part) {
+      const at = part.replace(/\r\n/g,'\n').indexOf('\n\n');
+      const encoding = /content-transfer-encoding:\s*([\w-]+)/i.exec(part.slice(0,at))?.[1];
+      body = decodePart(part.slice(at+2),encoding);
+    }
+  } else body = decodePart(body,headers['content-transfer-encoding']);
+  body = body.replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi,' ').replace(/<[^>]+>/g,' ');
+  const lines = body.split('\n').map(trim).filter(Boolean);
+  const subject = trim(headers.subject ?? lines.shift() ?? '').replace(/=\?[^?]+\?[BQ]\?[^?]*\?=/gi,'').slice(0,250);
+  const date = Date.parse(headers.date ?? '');
+  return {subject,from:trim(headers.from ?? '').slice(0,250),at:Number.isFinite(date)?new Date(date).toISOString():new Date().toISOString(),
+    snippet:trim(lines.join(' ')).slice(0,800)};
+}
+export async function addMail(raw,{ai}={}) {
+  const parsed = parseMailText(raw);
+  if (!parsed.subject && !parsed.snippet) throw new Error('Paste the email subject and text, or choose a saved .eml file.');
+  const id = 'm'+(await hash(parsed.subject+'\n'+parsed.from+'\n'+parsed.snippet)).slice(0,40);
+  if (await db.events.where('messageId').equals(id).first()) return {duplicate:true};
+  const message = {...parsed,provider:'manual',id,threadId:id};
+  const recorded = await recordMail(message,{apps:await db.applications.toArray(),ai});
+  return {event:recorded?.event??null,application:recorded?.application??null};
 }

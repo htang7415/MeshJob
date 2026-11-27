@@ -2,11 +2,11 @@ import { db, settings } from './db.js';
 import { ATS_ORIGINS, structuredValue } from './domain.js';
 import { ANSWER_PRESETS, fieldQuestion, PROFILE_KEYS } from './form-rules.js';
 import { PRICES, PRICE_VERSION } from './intelligence.js';
-import { MAIL_ORIGINS } from './mail.js';
+import { MAIL_PROVIDERS } from './mail.js';
 import { COUNTRY_OPTIONS } from './preferences.js';
 import { removeMaterial, saveAnswer, storeMaterial, versionLabel } from './materials.js';
 import { previewBackup, restoreBackup } from './portability.js';
-import { badge,button,check,dataTable,dateLabel,el,elements,field,formDialog,input,money,paragraph,permit,readTokens,rpc,select,task,textarea,toast,tokenField } from './ui.js';
+import { badge,button,check,dataTable,dateLabel,el,elements,field,formDialog,input,link,money,paragraph,permit,readTokens,rpc,select,task,textarea,toast,tokenField } from './ui.js';
 
 const defaultSelect=(name,material,rows,current)=>field(material,select(name,[['','No default'],...rows.map(row=>[row.id,row.label])],current??''));
 const buildForm=(children,submit,label='Save changes')=>el('form',{class:'stack',autocomplete:'off',onsubmit:task(async event=>{
@@ -226,44 +226,72 @@ function copyable(value,label) {
   return el('span',{class:'actions'},el('code',{class:'copy'},value),button('Copy',task(async()=>{await navigator.clipboard.writeText(value);},'Copied.'),'quiet small',{'aria-label':'Copy '+label}));
 }
 // Any Google account works; if the build ships no OAuth client, the user adds their own once (no rebuild).
-function gmailSetup(status,done) {
-  formDialog('Set up Gmail',[
-    paragraph('This build has no shared Google client. Create your own once; it takes about five minutes and works for any Gmail account.'),
-    el('ol',{class:'steps'},
-      el('li',{},'In Google Cloud Console, create a project and enable the Gmail API.'),
-      el('li',{},'Under OAuth consent screen, choose External, add the gmail.readonly scope, and publish the app. In Testing mode, Google ends access after 7 days.'),
-      el('li',{},'Create credentials → OAuth client ID → Web application, and add this authorized redirect URI:',copyable(status.gmailRedirect,'redirect URI')),
-      el('li',{},'Paste the client ID below.')),
-    field('Google OAuth client ID',input('clientId',status.gmailClientId,{required:true,placeholder:'1234-abc.apps.googleusercontent.com'}))
-  ],async ({clientId})=>{await rpc('gmail:client',{clientId});toast('Google client saved.');done?.();},'Save');
+const SETUP={
+  gmail:{label:'Gmail',idLabel:'Client ID',placeholder:'1234-abc.apps.googleusercontent.com',steps:redirect=>[
+    el('li',{},link('Enable the Gmail API','https://console.cloud.google.com/apis/library/gmail.googleapis.com'),' (create a project if asked).'),
+    el('li',{},link('Open Google Auth Platform','https://console.cloud.google.com/auth/overview'),': Get started, any app name, your email, audience External. Then Audience → Publish app. The “unverified app” notice is normal for your own app.'),
+    el('li',{},link('Create an OAuth client','https://console.cloud.google.com/auth/clients/create'),': type Web application, add this authorized redirect URI:',copyable(redirect,'redirect URI')),
+    el('li',{},'Paste the Client ID below.')]},
+  outlook:{label:'Outlook',idLabel:'Application (client) ID',placeholder:'00000000-0000-0000-0000-000000000000',steps:redirect=>[
+    el('li',{},link('Register an app','https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade'),': any name; account types “any organization and personal Microsoft accounts”; redirect URI platform Web:',copyable(redirect,'redirect URI')),
+    el('li',{},'In Authentication, tick Access tokens under Implicit grant and save.'),
+    el('li',{},'Paste the Application (client) ID below.')]}
+};
+// Each user connects their own mailbox with their own app: no shared client, no user cap, any account.
+function mailSetup(provider,status,after) {
+  const spec=SETUP[provider];
+  formDialog('Connect '+spec.label,[
+    paragraph('One-time setup, about five minutes. Your app is yours alone; MeshJob only reads mail.'),
+    el('ol',{class:'steps'},spec.steps(status.mailRedirect)),
+    field(spec.idLabel,input('clientId',status.clients[provider],{required:true,placeholder:spec.placeholder}))
+  ],async ({clientId})=>{
+    await rpc('mail:client',{provider,clientId});
+    await connectMail(provider);after?.();
+  },'Save and connect');
 }
-function gmail(config,health) {
+async function connectMail(provider) {
+  await permit(MAIL_PROVIDERS[provider].origins,['identity']);
+  const {account}=await rpc('mail:connect',{provider});
+  toast((account||MAIL_PROVIDERS[provider].label)+' connected. MeshJob reads recruiting mail only.');
+}
+export function addMailDialog() {
+  const file=input('eml','',{type:'file',accept:'.eml,message/rfc822,text/plain'});
+  formDialog('Add an email',[
+    paragraph('For any mailbox: paste the subject and text of a recruiting email, or choose a saved .eml file.'),
+    field('Email',textarea('text','',{rows:8,placeholder:'Subject: Interview invitation\n\nHi …'})),field('Or a saved email file',file)
+  ],async values=>{
+    const text=file.files[0]?await file.files[0].text():values.text;
+    const result=await rpc('mail:add',{text});
+    toast(result.duplicate?'This email was already added.':[result.category&&result.category!=='unknown'?result.category:'Email added',
+      result.linked?'linked to '+result.linked:'review it in Needs attention',result.urgent&&'action required'].filter(Boolean).join(' · '));
+  },'Add email');
+}
+function email(config,health) {
   const status=el('span',{class:'actions'});
   const help=el('small',{});
   const advanced=el('ul',{class:'settings-list'});
-  const connect=task(async()=>{
-    await permit(MAIL_ORIGINS,['identity']);
-    await rpc('gmail:connect');toast('Gmail connected. MeshJob reads recruiting mail only.');void refresh();
-  });
+  const start=(provider,data)=>task(async()=>{data.clients[provider]?await connectMail(provider):mailSetup(provider,data,refresh);void refresh();});
   const refresh=async()=>{
     const data=await rpc('integrations:status');
-    help.textContent=config.gmail?(data.gmailAccount||'Connected')+' · reads mail since '+dateLabel(config.gmailSince)+' · '+(health?.successAt?'last sync '+dateLabel(health.successAt):'waiting for first sync')+(health?.error?' · '+health.error:''):
-      'Read-only. Use any Gmail account, even one that differs from your Chrome account. Only mail received after you connect is read.';
-    status.replaceChildren(
-      config.gmail?badge('Connected','ok'):data.gmailConfigured?button('Connect Gmail',connect,'primary small'):button('Set up Gmail',()=>gmailSetup(data,refresh),'primary small'),
-      config.gmail&&button('Switch account',connect,'quiet small'));
-    advanced.replaceChildren(
-      el('li',{},el('div',{class:'label'},el('span',{},'Google OAuth client'),el('small',{},data.gmailClientId?'Using your own client.':data.gmailShipped?'Using the MeshJob client.':'No client yet.')),
-        el('div',{class:'control'},button(data.gmailClientId?'Change':'Use my own',()=>gmailSetup(data,refresh),'small'),
-          data.gmailClientId&&button('Remove',task(async()=>{await rpc('gmail:client',{clientId:''});await refresh();},'Removed.'),'quiet small'))),
-      el('li',{},el('div',{class:'label'},el('span',{},'Redirect URI'),el('small',{},'For your own Web application client.')),el('div',{class:'control'},copyable(data.gmailRedirect,'redirect URI'))));
+    const current=MAIL_PROVIDERS[config.mailProvider]?.label??'Gmail';
+    help.textContent=config.gmail?current+' · '+(data.mailAccount||'connected')+' · reads mail since '+dateLabel(config.gmailSince)+' · '+
+      (health?.successAt?'last sync '+dateLabel(health.successAt):'waiting for first sync')+(health?.error?' · '+health.error:''):
+      'Read-only. Any account. Only mail received after you connect is read.';
+    status.replaceChildren(...(config.gmail?[badge('Connected','ok'),button('Switch account',start(config.mailProvider,data),'quiet small')]:
+      ['gmail','outlook'].map(provider=>button('Connect '+MAIL_PROVIDERS[provider].label,start(provider,data),provider==='gmail'?'primary small':'small'))));
+    advanced.replaceChildren(...['gmail','outlook'].map(provider=>el('li',{},
+      el('div',{class:'label'},el('span',{},MAIL_PROVIDERS[provider].label+' app'),el('small',{},data.clients[provider]||'Not set up')),
+      el('div',{class:'control'},button(data.clients[provider]?'Change':'Set up',()=>mailSetup(provider,data,refresh),'small'),
+        data.clients[provider]&&button('Remove',task(async()=>{await rpc('mail:client',{provider,clientId:''});await refresh();},'Removed.'),'quiet small')))),
+      el('li',{},el('div',{class:'label'},el('span',{},'Redirect URI')),el('div',{class:'control'},copyable(data.mailRedirect,'redirect URI'))));
   };
   void refresh().catch(()=>{});
   return [el('ul',{class:'settings-list'},
-    el('li',{},el('div',{class:'label'},el('span',{},'Gmail'),help),el('div',{class:'control'},status)),
-    config.gmail&&row('Sync',el('span',{class:'actions'},button('Sync now',()=>operation('Sync Gmail','gmail:sync'),'small'),
-      button('Disconnect',()=>formDialog('Disconnect Gmail',[paragraph('Recorded events stay.'),check('revoke','Also revoke Google access')],
-        async values=>{await rpc('gmail:disconnect',{revoke:!!values.revoke});toast('Gmail disconnected.');},'Disconnect'),'quiet small'))),
+    el('li',{},el('div',{class:'label'},el('span',{},'Email'),help),el('div',{class:'control'},status)),
+    config.gmail&&row('Sync',el('span',{class:'actions'},button('Sync now',()=>operation('Sync email','gmail:sync'),'small'),
+      button('Disconnect',()=>formDialog('Disconnect email',[paragraph('Recorded events stay.'),config.mailProvider==='gmail'&&check('revoke','Also revoke Google access')],
+        async values=>{await rpc('mail:disconnect',{revoke:!!values.revoke});toast('Email disconnected.');},'Disconnect'),'quiet small'))),
+    row('Other email',button('Add email',addMailDialog,'small'),'Yahoo, iCloud, QQ, 163 and others: forward recruiting mail to your connected Gmail or Outlook, or add a message here.'),
     row('Notifications',button('Send test',task(()=>rpc('notification:test'),'Test notification sent.'),'small'))),
     el('details',{class:'more'},el('summary',{},'Advanced'),advanced)];
 }
@@ -322,7 +350,7 @@ export function profileView({config,materials,answers,health,usage},controls) {
     ['Answers',answersView(answers)],
     ['Job search',jobSearch(config,controls)],
     ['Claude',claude(config,usage)],
-    ['Gmail',gmail(config,health)],
+    ['Email',email(config,health)],
     ['Registration',registrationEmail(config)],
     ['Data',localData(controls)]
   ];

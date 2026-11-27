@@ -215,6 +215,49 @@ test('Gmail sign-in accepts any account and checks state, scope and redirect',as
   assert.throws(()=>parseRedirect('https://evil.example/#access_token=t','s1',redirect),/unexpected/);
   assert.ok(CLIENT_ID.test('123-abc.apps.googleusercontent.com'));assert.ok(!CLIENT_ID.test('abc'));
 });
+test('Outlook sync reads only new inbox mail through Graph and opens it in Outlook',async()=>{
+  const {syncMail,authUrl,parseRedirect}=await import('../src/mail.js');
+  const url=new URL(authUrl({provider:'outlook',clientId:'00000000-0000-0000-0000-000000000000',redirect:'https://x.chromiumapp.org/',interactive:true,state:'s'}));
+  assert.equal(url.origin+url.pathname,'https://login.microsoftonline.com/common/oauth2/v2.0/authorize');
+  assert.match(url.searchParams.get('scope'),/Mail\.Read/);assert.equal(url.searchParams.get('response_mode'),'fragment');
+  assert.equal(parseRedirect('https://x.chromiumapp.org/#access_token=t&expires_in=3600&state=s&scope=Mail.Read%20User.Read','s','https://x.chromiumapp.org/','outlook').token,'t');
+  await saveApplication(fixtureJob);
+  const since=new Date(Date.now()-3600_000).toISOString();
+  await updateSettings({gmail:true,mailProvider:'outlook',gmailSince:since});
+  const row=(id,subject,minutes,preview=fixtureMail.snippet)=>({id:'AAMkAD'+id+'==/long+id',conversationId:'conv'+id,subject,bodyPreview:preview,
+    receivedDateTime:new Date(Date.now()-minutes*60_000).toISOString(),from:{emailAddress:{name:'Acme Health',address:'jobs@acmehealth.example.com'}},isRead:false,
+    webLink:'https://outlook.live.com/owa/?ItemID='+id});
+  const paths=[];
+  const api=async path=>{
+    paths.push(path);
+    if(path.includes('$skiptoken')) return {value:[row(3,'Schedule your interview with Acme Health',5)]};
+    return {value:[row(0,'Acme Health Clinical Coordinator · Application received',120),row(1,'Acme Health Clinical Coordinator · Application received',30),row(2,'Weekly newsletter',20,'Our favorite recipes this week.')],
+      '@odata.nextLink':'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skiptoken=abc'};
+  };
+  const result=await syncMail({config:await settings(),api});
+  assert.equal(result.accepted,2);assert.equal(result.urgent,1);
+  assert.match(decodeURIComponent(paths[0]),/receivedDateTime ge /);
+  const events=(await db.events.toArray()).filter(event=>event.id.startsWith('outlook:'));
+  assert.equal(events.length,2);assert.ok(events.every(event=>/^o[\da-f]{40}$/.test(event.messageId)&&event.url.startsWith('https://outlook.live.com/')));
+  assert.equal((await db.applications.toArray())[0].status,'Interview');
+  const cursor=await db.runtime.get('outlook-cursor');assert.equal(cursor.nextLink,null);assert.ok(cursor.after);
+});
+test('any mailbox: pasted text and saved .eml files are classified and linked once',async()=>{
+  const {addMail,parseMailText}=await import('../src/mail.js');
+  const {application}=await saveApplication(fixtureJob);
+  const eml='From: Acme Health <jobs@acmehealth.example.com>\r\nSubject: Acme Health Clinical Coordinator interview\r\nDate: Tue, 24 Nov 2026 10:00:00 +0000\r\n'+
+    'Content-Type: multipart/alternative; boundary="b1"\r\n\r\n--b1\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n'+
+    'We would like to invite you to an interview for REQ-1234. Please share your availability by Nov 30, 2026 at 5pm EST.=\r\n Thanks\r\n--b1--\r\n';
+  const parsed=parseMailText(eml);
+  assert.equal(parsed.subject,'Acme Health Clinical Coordinator interview');assert.equal(parsed.at,'2026-11-24T10:00:00.000Z');
+  assert.match(parsed.snippet,/availability by Nov 30, 2026 at 5pm EST\. Thanks/);
+  const first=await addMail(eml);
+  assert.equal(first.event.category,'interview');assert.equal(first.event.urgent,true);assert.equal(first.event.applicationId,application.id);
+  assert.equal((await addMail(eml)).duplicate,true);
+  const pasted=await addMail('Acme Health Clinical Coordinator · Application received\nThanks for applying to the Clinical Coordinator position at Acme Health. REQ-1234');
+  assert.equal(pasted.event.category,'confirmation');assert.equal(pasted.event.applicationId,application.id);
+  await assert.rejects(()=>addMail('   '),/Paste the email/);
+});
 test('company alone does not link multiple or single applications',async()=>{
   const examples=[{...fixtureJob,id:'a',createdAt:'2026-11-19T00:00:00Z'},
     {...fixtureJob,id:'b',title:'Data scientist',requisition:'REQ-1235',createdAt:'2026-11-19T00:00:00Z'}];
