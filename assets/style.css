@@ -199,3 +199,4 @@ tbody tr:hover{background:color-mix(in srgb,var(--fill) 60%,transparent)}
 .toast.error{background:var(--red);color:#fff}
 .skip{position:fixed;inset:10px auto auto 10px;transform:translateY(-200%);z-index:70;background:var(--surface);padding:8px 12px;border-radius:8px}
 .skip:focus{transform:none}
+.toolbar select{width:auto;min-width:150px}

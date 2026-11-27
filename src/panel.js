@@ -268,7 +268,7 @@ async function submitted(yes) {
 // ---- Views ----
 function jobCard(app) {
   const job=draftJob(app);
-  const levelSelect=select('level',[['','Level'],...LEVELS,...(job.seniority&&!LEVELS.includes(job.seniority)?[job.seniority]:[])],job.seniority||'',{'aria-label':'Level'});
+  const levelSelect=select('level',[['','Not set'],...LEVELS,...(job.seniority&&!LEVELS.includes(job.seniority)?[job.seniority]:[])],job.seniority||'',{'aria-label':'Level'});
   levelSelect.addEventListener('change',task(()=>updateDetails({seniority:levelSelect.value})));
   const source=input('source',job.attribution||'',{list:'source-choices',placeholder:'Source','aria-label':'Source'});
   source.addEventListener('change',task(()=>updateDetails({source:source.value.trim()})));

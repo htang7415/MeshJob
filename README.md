@@ -4,13 +4,13 @@ MeshJob is a local-first Chrome extension for discovering jobs, preparing applic
 
 ## Install
 
-1. Download [MeshJob 1.0.7 (ZIP)](install/MeshJob-1.0.7.zip) and extract it to a permanent folder. Keep this folder in place while using the extension.
+1. Download [MeshJob 1.1.0 (ZIP)](install/MeshJob-1.1.0.zip) and extract it to a permanent folder. Keep this folder in place while using the extension.
 2. In Chrome 120 or later, open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the extracted folder containing `manifest.json`.
-3. Pin MeshJob and click its toolbar icon. In **Discover**, choose **Set up discovery** or add a board in **Manage sources**. Grant the requested origins for the sources you choose. Edit your matching criteria in **Discover → Preferences**.
-4. Add personal details, PDFs, and any verified answers in **Profile**. On an application tab, click the toolbar icon, prepare a draft, select your PDFs, and fill available fields. Review the employer’s page and submit it yourself.
-5. Use **Tracker** to follow stages and resolve actions. Use **Search status** in the Dashboard to pause, resume, or finish. Export a backup before uninstalling.
+3. Pin MeshJob and click its toolbar icon. The Side Panel opens; choose **Full view** for the Dashboard. In **Discover**, choose **Set up discovery** to pick roles, recommended boards and access to job application sites.
+4. Add your details, PDFs and answers in **Settings**. On an application page, click the toolbar icon and choose **Autofill**. Review the page and submit it yourself.
+5. Use **Tracker** to follow stages and actions. Pause or finish the search in **Settings → Job search**. Export a backup before uninstalling.
 
-The toolbar opens the Dashboard on general pages and the Side Panel on recognized job URLs. When open, the Side Panel follows the active tab and updates when the application form changes. For an embedded Greenhouse application, choose **Allow Greenhouse form** when prompted. Chrome requests Greenhouse access and permission to identify the embedded document. If it shows **Connect this tab**, click the MeshJob toolbar icon to give it temporary access. Choose **Always scan this site** in the panel to enable automatic scans for future tabs on that site. Chrome manages registration credentials by default. In **Profile → Registration credentials**, you can set a separate registration email and an optional password.
+The toolbar icon always opens the Side Panel (Alt+Shift+M); Alt+Shift+F opens Full view. The icon shows a blue dot on application pages. The Side Panel follows the active tab and shows one of four views: your queue and new jobs on other pages, a job card on postings, the autofill view on forms, or a request for access. Allowing the job application sites during setup lets it follow Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable pages without extra clicks; on other sites choose **Allow on this site**. Chrome Password Manager handles account passwords.
 
 ### Update an existing installation
 
@@ -22,19 +22,20 @@ Official releases starting with 1.0.3 share a fixed extension ID. Use the same C
 Versions through 1.0.2 used directory-based IDs. Chrome treats copies loaded from different folders as separate extensions, each with its own local records. To switch to the fixed ID:
 
 1. Open each old copy that contains data and choose **Profile → Local data → Download backup ZIP**. Save the files separately. You can turn off the old copies in `chrome://extensions` after exporting.
-2. Extract and load the current release in a permanent folder. In the new copy, choose **Profile → Local data → Import backup ZIP** and preview the backup from the old copy whose profile and preferences you want to keep. In a fresh installation, use **Replace all local records** to restore that backup.
-3. If the other copy has records you want, import its backup using **Merge new records into this profile**. Verify the Tracker, Profile, and documents in the new copy before removing the old cards.
+2. Extract and load the current release in a permanent folder. In the new copy, choose **Settings → Data → Import backup ZIP** and preview the backup from the old copy whose profile and preferences you want to keep. In a fresh installation, use **Replace all local records** to restore that backup.
+3. If the other copy has records you want, import its backup using **Merge new records into this profile**. Verify the Tracker, Settings, and documents in the new copy before removing the old cards.
 
 Restored sources start disabled. Re-enable the sources you want and reconnect optional integrations in the new copy. [Chrome extension IDs](https://developer.chrome.com/docs/extensions/reference/manifest/key)
 
-### Autofill on Workday
+### Autofill and tracking
 
-If the listing exposes a job description, **Save draft** keeps a local copy with the application. Open the application in **Tracker → Job description** to read it, or use **Edit details** to paste it manually if the application form has no description. Full backup ZIPs include saved descriptions.
+1. Open the application and click the toolbar icon. MeshJob reads the form and shows how many fields and required fields it found.
+2. Choose **Autofill**. MeshJob creates the Tracker entry, fills what your profile and saved answers support, waits for follow-up questions to appear, and fills again. **Needs you** lists what is left; choosing an item jumps to that field.
+3. Check the company, title, **Level**, **Source** and **Resume** at the top of the panel and edit any of them inline.
+4. Submit on the page. A recognized receipt marks the application Applied; otherwise the panel asks **Submitted? Yes / No**. MeshJob then offers to save answers you typed by hand for next time.
+5. On Workday, move to the next step on the page and choose **Fill this page**.
 
-1. Open the employer’s application tab and click the MeshJob toolbar icon. Chrome opens the application assistant in its side panel, whose position follows Chrome’s settings.
-2. Choose **Grant page access** if prompted. Sign in or complete any employer challenge in the page, then choose **Scan again**.
-3. Select any PDFs you want to attach and choose **Fill available fields**. MeshJob saves a draft when it can identify the job. If details are missing, use **Prepare application** first. With reviewed Workday navigation enabled in Profile, you can also choose **Fill to review**.
-4. Review the filled and unresolved fields before submitting in the employer’s page. On supported Workday skill pickers, MeshJob selects exact saved entries it can verify.
+Applications record the level, where you found the job (MeshJob, the referring site, or Company site), and the resume label and version. Replacing a PDF keeps the copy an application was sent with.
 
 ## Build and test
 
@@ -49,7 +50,7 @@ npm test
 Load `dist/` as the unpacked extension. To generate a reproducible ZIP, use a clean output directory and set `MESHJOB_ZIP`. The ZIP has fixed entry timestamps.
 
 ```sh
-MESHJOB_DIST=./dist-release MESHJOB_ZIP=./MeshJob-1.0.7.zip npm run build
+MESHJOB_DIST=./dist-release MESHJOB_ZIP=./MeshJob-1.1.0.zip npm run build
 ```
 
 The end-to-end suite uses isolated Chromium profiles. It intercepts the employer hosts for all fill and submission fixtures. Set `MESHJOB_TEST_ROOT` to a writable scratch directory. Set `PLAYWRIGHT_BROWSERS_PATH` to a reusable browser cache if your environment has one.
@@ -67,31 +68,26 @@ Set `MESHJOB_NATIVE_CHROME=1` and `MESHJOB_BROWSER` to the installed Chrome exec
 
 ## Sources and freshness
 
-The bundled catalog includes 31 public employer boards across Greenhouse, Ashby, and Lever. We Work Remotely RSS and three public GitHub new-grad lists are optional. You can add sources from URLs, CSV, or a source pack. Public Careers pages are supported when they expose readable JobPosting data. Workday monitoring needs both Chrome origin access and terms that permit automated checks for the particular tenant. Workday uses the public careers interface, which can change between tenants.
+The bundled catalog includes 31 public employer boards across Greenhouse, Ashby, and Lever. SmartRecruiters and Workable boards can be added by URL. We Work Remotely RSS and three public GitHub new-grad lists are optional. Public Careers pages are supported when they expose readable JobPosting data. Workday monitoring needs both Chrome origin access and terms that permit automated checks for the particular tenant.
 
-Sources normally check every 10 minutes while Chrome is running and search is Active. **Verified recent** uses original posting evidence and an active official record. **Newly detected** describes appearance between complete board checks. Many postings have no reliable original date, even when they expose an update or re-publication timestamp. Those are listed with the first observation time. Unsupported sites can be tracked manually. [Greenhouse](https://docs.greenhouse.io/job-board.html), [Ashby](https://developers.ashbyhq.com/docs/public-job-posting-api), [Lever](https://github.com/lever/postings-api), [We Work Remotely RSS](https://weworkremotely.com/remote-job-rss-feed)
+Sources are checked every 10 minutes while Chrome is running and search is Active. Workday reads only its newest pages between complete snapshots every six hours. Discover shows **New** jobs (an original posting time inside your window) and **Newly detected** jobs (absent from the previous complete check). Any earlier evidence hides a job as older: Greenhouse `first_published`, Lever `createdAt`, Ashby `publishedAt`, SmartRecruiters `releasedDate`, Workday and Workable age labels, or MeshJob having seen it before the window. A newly added board therefore adds none of its backlog. Same-role relistings are treated as reposts. Undated jobs appear only with **Include jobs without a posting date**. [Greenhouse](https://docs.greenhouse.io/job-board.html), [Ashby](https://developers.ashbyhq.com/docs/public-job-posting-api), [Lever](https://github.com/lever/postings-api), [We Work Remotely RSS](https://weworkremotely.com/remote-job-rss-feed)
 
 ## Optional integrations
 
 ### Claude
 
-In Profile, set a personal API key. Claude can look for jobs on the web, score eligible descriptions against your profile and existing PDFs, and suggest answers you review before filling. The default monthly app-side limit is $10, with a daily limit, a per-request limit, and at most three web searches in each of six local-time rounds. MeshJob estimates costs and accounts for reservations when a request’s final usage is unknown. Provider billing can differ. [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing), [Browser API authentication](https://platform.claude.com/docs/en/manage-claude/authentication)
+In **Settings → Claude**, set a personal API key and a monthly budget (default $10). **Match new jobs** scores new matching jobs against your profile and resumes. **Daily web search** looks for employers hiring for your roles once a day; MeshJob verifies each posting through the employer's ATS API, drops anything it cannot verify, and suggests unknown boards in Discover. In the Side Panel, **Suggest answers** proposes values for remaining fields from your profile and saved answers, limited to the page's own options; nothing is filled until you select it. Requests use structured outputs and low effort. Provider billing can differ from MeshJob's estimates. [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing)
 
 ### Gmail
 
-The standard build has no OAuth client. For your own Gmail-enabled build:
+Gmail access is read-only (`gmail.readonly`); MeshJob never changes your mailbox. Release builds that include the MeshJob OAuth client show **Settings → Gmail → Connect Gmail**: choose your account, approve, and syncing starts. Chrome uses the Google account signed in to the Chrome profile, so that account should be the Gmail you use for applications.
 
-1. Load the extension and note its ID in `chrome://extensions`. The default build uses MeshJob’s published public key. Set `MESHJOB_EXTENSION_PUBLIC_KEY` only when you need a separate development or OAuth identity. Use the public key only.
-2. In your Google Cloud project, enable the Gmail API and configure the OAuth consent screen. If the project is in testing, add your Google account as a test user.
-3. Create a **Chrome Extension** OAuth client with the exact extension ID. Build with `MESHJOB_OAUTH_CLIENT_ID=your-id.apps.googleusercontent.com npm run build`, and also set `MESHJOB_EXTENSION_PUBLIC_KEY` if you chose a separate identity. Reload the same extension and confirm the ID matches the OAuth client.
-4. In **Profile → Integrations**, choose **Connect read-only** and grant consent. Use **Sync now** and inspect the last-sync status. Routine mark-read is an optional upgrade. Chrome Identity handles the redirect for this client type.
-
-The restricted Gmail scopes can require Google verification for distribution. Chrome’s account used for authorization should match the Gmail account you open when following mail links. [Chrome OAuth guide](https://developer.chrome.com/docs/extensions/how-to/integrate/oauth), [Stable extension IDs](https://developer.chrome.com/docs/extensions/reference/manifest/key), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)
+Until Google verifies the restricted Gmail scope, the consent screen says the app is unverified, and an unverified project can be used by at most 100 accounts in total. To ship a client, create a Google Cloud project, enable the Gmail API, publish the OAuth consent screen (Testing mode expires consent after 7 days), create a **Chrome Extension** OAuth client for MeshJob's fixed extension ID, and put the client ID in `scripts/oauth-client-id.txt` before building. Forks can instead set `MESHJOB_OAUTH_CLIENT_ID` (and `MESHJOB_EXTENSION_PUBLIC_KEY` for a separate identity). [Chrome OAuth guide](https://developer.chrome.com/docs/extensions/how-to/integrate/oauth), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [Unverified apps](https://support.google.com/cloud/answer/7454865)
 
 ## Data and privacy
 
-MeshJob has no telemetry. Source requests go to the origins you grant. Autofill reads and writes form controls on the active HTTPS tab after you authorize an action. It leaves final submission, consent, and certification to you. PDFs are parsed locally, and only selected files are uploaded to the intended form. Claude receives relevant text and form cues when enabled. Gmail receives a short-excerpt request for incremental messages and, when separately enabled, per-message label updates for confidently linked routine mail. Only minimal tracking evidence is kept. Chrome notifications can show recruiting subject lines.
+MeshJob has no telemetry. Source requests go to the origins you grant. Autofill reads and writes form controls on the active HTTPS tab after you authorize an action. It leaves final submission, consent, and certification to you. PDFs are parsed locally, and only selected files are uploaded to the intended form. Claude receives relevant text and form cues when enabled. Gmail receives read-only requests for message headers and short excerpts. Only minimal tracking evidence is kept. Chrome notifications can show recruiting subject lines.
 
-Permissions used by default cover the toolbar and Side Panel, the active tab and scripted form access, local storage, scheduled checks, and notifications. Specific site origins and Chrome Identity are requested when needed. Chrome stores the key and optional persistent registration password in local plaintext accessible to trusted extension contexts. Prefer Chrome Password Manager with a unique password per site. Credentials and raw mailbox data are excluded from backups.
+Permissions used by default cover the toolbar and Side Panel, the active tab and scripted form access, local storage, scheduled checks, notifications, and URL rules that highlight the toolbar icon on application pages. Specific site origins and Chrome Identity are requested when needed. Chrome stores the Claude key in local plaintext accessible to trusted extension contexts. MeshJob does not store account passwords. Prefer Chrome Password Manager with a unique password per site. Credentials and raw mailbox data are excluded from backups.
 
 Tracker exports UTF-8 CSV and can import a CSV with column mapping. MeshJob escapes formula-like cells and cells starting with an apostrophe by adding an apostrophe. Enable **Decode escaped cells** on import only for MeshJob CSVs. The ZIP backup retains checksummed records, answers, preferences and PDF blobs. Restore previews the data and offers merge or replacement. Restored sources require a new enablement choice. Exports contain personal information. [MIT license](LICENSE)
