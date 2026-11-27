@@ -320,6 +320,7 @@ import { cleanLabel, consentField, criticalField, fieldKey, greenhouseEmbed, lea
     if (row.type==='select') {
       const read = () => choose([...node.options].filter(item=>!item.disabled&&item.value),value,item=>item.textContent);
       const option = read() ?? (['region','city'].includes(fieldKey(row)) ? await waitingFor(read,500) : null);
+      if (!option && entry.fallback && !cancelled) return Object.assign(await setField(node,row,{...entry,value:entry.fallback,fallback:null}),{fallback:true});
       if (!option || cancelled) throw new Error('No exact matching option.');
       setNative(node,option.value);
       return ()=>node.value===option.value;
@@ -339,6 +340,10 @@ import { cleanLabel, consentField, criticalField, fieldKey, greenhouseEmbed, lea
       option ??= await waitingFor(findOption,750);
       if (!option || cancelled || !safeClick(option)) {
         if (typed && node.isConnected && node.value===String(value)) setNative(node,'');
+        if (entry.fallback && !cancelled) {
+          node.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+          return Object.assign(await setField(node,row,{...entry,value:entry.fallback,fallback:null}),{fallback:true});
+        }
         throw new Error('No exact accessible option.');
       }
       return ()=>normalized(node.value || node.textContent)===normalized(value) || option.getAttribute('aria-selected')==='true' ||
@@ -406,7 +411,7 @@ import { cleanLabel, consentField, criticalField, fieldKey, greenhouseEmbed, lea
           await Promise.resolve();
           const passing = verify() && node.validity?.valid!==false && node.getAttribute('aria-invalid')!=='true';
           if (passing) byMeshJob.add(node);
-          results.push({id:row.id,label:row.label,state:passing?'filled':'failed',file:passing?entry.file?.name:undefined,
+          results.push({id:row.id,label:row.label,state:passing?'filled':'failed',file:passing?entry.file?.name:undefined,fallback:passing&&verify.fallback||undefined,
             materialText:passing&&entry.authority==='reviewed'&&row.type==='textarea',error:passing?undefined:'The page did not retain or accept the value.'});
         } catch(error) {results.push({id:row.id,label:row.label,state:'failed',error:error.message});}
       }

@@ -350,3 +350,29 @@ test('Hacker News hiring threads list startups with links and listed dates',asyn
   assert.equal(freshness({...items[0],active:true,firstSeenAt:new Date().toISOString()},24),'detected');
   assert.equal(freshness({...items[1],active:true,firstSeenAt:new Date().toISOString()},24),'older');
 });
+
+test('standard EEO answers map to each form’s wording, including broader race groups',async()=>{
+  const {pickOption,ANSWER_PRESETS,fieldQuestion,createFillPlan}=await import('../src/form-rules.js');
+  const pick=(options,value)=>options[pickOption(options,value)];
+  assert.ok(ANSWER_PRESETS.every(preset=>preset.countries||preset.choices?.length),'every preset uses standard choices');
+  assert.equal(pick(['Asian','White','Black or African American'],'East Asian'),'Asian');
+  assert.equal(pick(['East Asian','South Asian','Asian'],'East Asian'),'East Asian');
+  assert.equal(pick(['Asian (Not Hispanic or Latino)','White (Not Hispanic or Latino)'],'Asian'),'Asian (Not Hispanic or Latino)');
+  assert.equal(pick(['I am not a protected veteran','I identify as one or more of the classifications of protected veteran',"I don't wish to answer"],'No'),'I am not a protected veteran');
+  assert.equal(pick(['Yes, I have a disability','No, I do not have a disability and have not had one in the past','I do not want to answer'],'Prefer not to answer'),'I do not want to answer');
+  assert.equal(pick(['Man','Woman','Non-binary'],'Male'),'Man');
+  assert.equal(pick(['Hispanic/Latino','Not Hispanic/Latino'],'Hispanic or Latino'),'Hispanic/Latino');
+  assert.equal(fieldQuestion('Race/Ethnicity'),fieldQuestion('How would you identify your race?'));
+  assert.equal(fieldQuestion('Veteran Status'),fieldQuestion('Are you a veteran?'));
+  const answers=[{verified:true,scope:'global',type:'any',questionKey:fieldQuestion('How would you identify your race?'),value:'East Asian'}];
+  assert.deepEqual(createFillPlan([{id:'r',label:'Race',type:'select',critical:true}],{answers}).map(row=>row.value),['East Asian']);
+});
+test('single-school forms get the first education entry and an unlisted school becomes Other plus its name',async()=>{
+  const {createFillPlan}=await import('../src/form-rules.js');
+  const profile={email:'a@example.invalid',education:[{school:'Zhejiang University',degree:"Bachelor's",field:'Computer Science',end:'2026-06'}]};
+  const fields=[{id:'s',label:'School',type:'combobox'},{id:'d',label:'Degree',type:'select'},{id:'m',label:'Discipline',type:'select'},
+    {id:'g',label:'Graduation year',type:'text'},{id:'o',label:'If other, please specify',type:'text'}];
+  const first=createFillPlan(fields,{profile});
+  assert.deepEqual(first.map(row=>[row.id,row.value,row.fallback]),[['s','Zhejiang University','Other'],['d',"Bachelor's",undefined],['m','Computer Science',undefined],['g','2026',undefined]]);
+  assert.deepEqual(createFillPlan([fields[4]],{profile,otherSchool:true}).map(row=>row.value),['Zhejiang University']);
+});

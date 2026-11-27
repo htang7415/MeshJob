@@ -31,7 +31,7 @@ function skillsForm(profile) {
       await rpc('settings:update',{config:{profile:{skills:readTokens(values,'skills')}}});toast('Skills saved.');
     },'Save skills'));
 }
-const workFields={education:[['school','School'],['degree','Degree'],['field','Field of study'],['gpa','GPA'],['start','Start date'],['end','End date']],
+const workFields={education:[['school','School'],['degree','Degree'],['field','Major'],['gpa','GPA'],['start','Start date'],['end','End date']],
   experience:[['employer','Employer'],['title','Job title'],['location','Location'],['start','Start date'],['end','End date'],['description','Description']]};
 function historyDialog(key,index) {
   void (async()=>{
@@ -86,8 +86,8 @@ function materialDialog(type,item) {
   let operation;
   formDialog((item?'Edit ':'Add ')+(type==='resume'?'resume':'cover letter'),[
     field(item?'Replacement PDF · optional':'PDF file',file),
-    field('Label',input('label',item?.label,{maxlength:200})),
-    field('Tags',input('tags',item?.tags?.join(', '))),
+    field('Target roles',input('label',item?.label,{maxlength:200,placeholder:'Software Engineer, ML Engineer'}),
+      type==='resume'?'Shown as this resume’s name and used to pick the best resume for each job.':'Shown as this letter’s name.'),
     el('details',{},el('summary',{},'Review or supply extracted text'),field('Material text',textarea('text',item?.text??'',{maxlength:150000}))),
     state,cancel
   ],async values=>{
@@ -95,7 +95,7 @@ function materialDialog(type,item) {
     operation=new AbortController();
     try {
       const text=file.files[0]&&item&&values.text===item.text?'':values.text;
-      const result=await storeMaterial({...values,type,text,file:file.files[0],id:item?.id,signal:operation.signal});
+      const result=await storeMaterial({...values,tags:[],type,text,file:file.files[0],id:item?.id,signal:operation.signal});
       toast(result.warning||'PDF material saved.');
     } finally {state.textContent='';cancel.hidden=true;}
   });
@@ -138,9 +138,10 @@ function answerDialog(answer,preset) {
   } else {
     answerControl=field('Answer',textarea('value',value,{required:true,maxlength:6000}));
   }
-  formDialog(answer?'Edit verified answer':'Add verified answer',[
+  const {dialog}=formDialog(answer?'Edit answer':'Set answer',[
     preset?el('p',{class:'answer-question'},question):field('Question',textarea('question',question,{required:true,maxlength:420})),
-    answerControl
+    answerControl,
+    answer&&el('div',{class:'actions'},button('Clear answer',task(async()=>{await db.answers.delete(answer.id);dialog.close();toast('Answer cleared.');}),'danger small'))
   ],async values=>{
     const response=preset?.countries?readTokens(values,'countries').join(', '):values.value;
     if(structuredValue(response))throw new Error('Enter a plain-text answer.');
@@ -149,11 +150,6 @@ function answerDialog(answer,preset) {
   });
 }
 
-function removeAnswer(answer) {
-  formDialog('Delete verified answer',[paragraph(answer.question)],async()=>{
-    await db.answers.delete(answer.id);toast('Answer deleted.');
-  },'Delete answer');
-}
 function answersView(answers) {
   const displayed=new Set();
   const rows=ANSWER_PRESETS.map(preset=>{
@@ -161,17 +157,16 @@ function answersView(answers) {
     if(answer)displayed.add(answer.id);
     return el('li',{class:'answer-row'},el('span',{},preset.question),
       answer?badge(answer.value):el('span',{class:'meta'},'Not set'),
-      button(answer?'Edit':'Set answer',()=>answerDialog(answer,preset),'quiet',{'aria-label':(answer?'Edit answer: ':'Set answer: ')+preset.question}),
-      answer&&button('Remove',()=>removeAnswer(answer),'quiet',{'aria-label':'Remove answer: '+preset.question}));
+      button(answer?'Edit':'Set answer',()=>answerDialog(answer,preset),'quiet',{'aria-label':(answer?'Edit answer: ':'Set answer: ')+preset.question}));
   });
   const custom=answers.filter(answer=>!displayed.has(answer.id));
   return [
     el('div',{class:'actions'},button('Add custom answer',()=>answerDialog(),'small')),
-    el('h3',{},'Work eligibility and equal employment'),el('ul',{class:'clean-list'},rows),
+    el('h3',{},'Work eligibility and equal employment'),el('ul',{class:'inset'},rows),
     custom.length>0&&el('h3',{},'Custom answers'),
-    custom.length>0&&el('ul',{class:'clean-list'},custom.map(answer=>el('li',{class:'answer-row'},
+    custom.length>0&&el('ul',{class:'inset'},custom.map(answer=>el('li',{class:'answer-row'},
       el('span',{},answer.question,el('small',{class:'block'},answer.context||answer.scope)),
-      badge(answer.value),button('Edit',()=>answerDialog(answer),'quiet'),button('Remove',()=>removeAnswer(answer),'quiet'))))
+      badge(answer.value),button('Edit',()=>answerDialog(answer),'quiet',{'aria-label':'Edit answer: '+answer.question}))))
   ];
 }
 function operation(label,type) {

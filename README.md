@@ -35,6 +35,8 @@ Restored sources start disabled. Re-enable the sources you want and reconnect op
 4. Submit on the page. A recognized receipt marks the application Applied; otherwise the panel asks **Submitted? Yes / No**. MeshJob then offers to save answers you typed by hand for next time.
 5. On Workday, move to the next step on the page and choose **Fill this page**.
 
+Work-eligibility and equal-employment answers in **Settings → Answers** are standard choices; MeshJob maps them to each form's wording (for example East Asian to Asian, or No to "I am not a protected veteran"). If your school is not in a form's list, MeshJob picks Other and types the school name.
+
 Applications record the level, where you found the job (MeshJob, the referring site, or Company site), and the resume label and version. Replacing a PDF keeps the copy an application was sent with.
 
 ## Build and test

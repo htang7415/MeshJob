@@ -218,7 +218,8 @@ async function fillPage() {
   let result=null;
   for(let pass=0;pass<3&&!state.cancelled;pass++) {
     const pending=(found.registration?fields.filter(row=>!registrationEmailField(row)):fields).filter(row=>!attempted.has(row.id));
-    const plan=createFillPlan(pending,{profile,answers:state.answers,job:app,materials:{
+    const otherSchool=!!result?.results.some(row=>row.fallback);
+    const plan=createFillPlan(pending,{profile,answers:state.answers,job:app,otherSchool,materials:{
       resume:pass===0&&needsType(fields,'resume')?await serializedFile('resume'):null,
       cover:pass===0&&needsType(fields,'cover')?await serializedFile('cover'):null,coverText:state.coverText}});
     if(!plan.length) break;
