@@ -148,14 +148,20 @@ async function queueCandidates(rows,source,config,generation) {
 
 // Aggregated lists reveal which employers hire for the user's roles; suggest their boards (Discover → Suggested boards).
 const BOARD_PROVIDERS=new Set(['greenhouse','ashby','lever','smartrecruiters','workable']);
+// A posting or a board root on a supported ATS identifies the employer's board.
+function boardOf(url) {
+  const identity=postingIdentity(url);
+  if(identity) return BOARD_PROVIDERS.has(identity.source.provider)?identity.source:null;
+  try { const source=detectSource(url); return BOARD_PROVIDERS.has(source.provider)?source:null; } catch { return null; }
+}
 export async function suggestBoards(rows,config,generation) {
   if(!config.preferences.titles.length) return;
   const counts=new Map();
   for(const {job} of rows) {
-    const identity=postingIdentity(job.url);
-    if(!identity||!BOARD_PROVIDERS.has(identity.source.provider)||!preferenceDecision(job,config.preferences).eligible) continue;
-    const entry=counts.get(identity.source.id)??{source:{...identity.source,name:job.company||identity.source.name},title:job.title,count:0};
-    entry.count++;counts.set(identity.source.id,entry);
+    const board=boardOf(job.url);
+    if(!board||!preferenceDecision(job,config.preferences).eligible) continue;
+    const entry=counts.get(board.id)??{source:{...board,name:job.company||board.name},title:job.title,count:0};
+    entry.count++;counts.set(board.id,entry);
   }
   const top=[...counts.values()].sort((a,b)=>b.count-a.count).slice(0,40);
   await guarded(generation,[db.runtime,db.sources],async()=>{
@@ -261,7 +267,7 @@ export async function runSource(id,{generation,op,full=false}={}) {
         onCandidates:async rows=>{
           const latest=await settings();
           await queueCandidates(rows,source,latest,generation);
-          if(source.provider==='github') await suggestBoards(rows,latest,generation);
+          if(['github','hn'].includes(source.provider)) await suggestBoards(rows,latest,generation);
         }});
       if(generation==null) await candidateBatch(await settings(),generation,source.id);
       return result;

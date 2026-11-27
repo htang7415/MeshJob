@@ -17,6 +17,7 @@ export const CATALOG = [
     ...detectSource(prefix+token), name, method:'Public '+method+' posting API', catalog:CATALOG_VERSION, verifiedAt:'2026-11-25'
   }))),
   {...detectSource('https://weworkremotely.com/remote-jobs.rss'),name:'We Work Remotely',method:'Public RSS feed',catalog:CATALOG_VERSION,optional:true},
+  {...detectSource('https://news.ycombinator.com/whoishiring'),name:'Hacker News: Who is hiring (startups)',interval:60,method:'Public monthly hiring thread',catalog:CATALOG_VERSION},
   ...[
     ['https://github.com/SimplifyJobs/New-Grad-Positions/blob/dev/.github/scripts/listings.json','SimplifyJobs New Grad (1,000+ companies)'],
     ['https://github.com/SimplifyJobs/Summer2026-Internships/blob/dev/.github/scripts/listings.json','SimplifyJobs Internships (1,000+ companies)'],

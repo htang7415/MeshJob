@@ -3,7 +3,7 @@ import { canonicalUrl, publicUrl, hasJobPath, exactDate, earliest, JOB_DESCRIPTI
 
 const { findAll, findOne, textContent } = DomUtils;
 const pathToken = /^[\w.-]{1,100}$/;
-export const PROVIDERS = ['greenhouse','ashby','lever','workday','smartrecruiters','workable','rss','careers','github'];
+export const PROVIDERS = ['greenhouse','ashby','lever','workday','smartrecruiters','workable','rss','careers','github','hn'];
 const JOB_AGGREGATORS=new Set(['weworkremotely.com','remotive.com','jobicy.com','himalayas.app','indeed.com','glassdoor.com','ziprecruiter.com']);
 const employment = { FullTime:'Full-time', PartTime:'Part-time', Intern:'Internship', Contract:'Contract', Temporary:'Temporary', FULL_TIME:'Full-time', PART_TIME:'Part-time', CONTRACTOR:'Contract', INTERN:'Internship' };
 const period = value => String(value??'').toLowerCase().replace(/^per[- ]/,'').replace(/^(?:annual|annually|yearly)$/,'year').replace(/^(hour|week|month)ly$/,'$1');
@@ -34,7 +34,7 @@ export function plain(html) {
 
 export function detectSource(value, hint = '') {
   const raw = trim(value);
-  const url = raw.length<=460 ? publicUrl(raw) : null;
+  const url = raw.length<=460 ? (/^https:\/\/news\.ycombinator\.com\/whoishiring\/?$/.test(raw) ? new URL(raw) : publicUrl(raw)) : null;
   if (!url) throw new Error('Enter a supported public HTTPS URL.');
   const {hostname,origin} = url;
   const parts = url.pathname.split('/').filter(Boolean);
@@ -59,6 +59,9 @@ export function detectSource(value, hint = '') {
   } else if (hostname === 'apply.workable.com') {
     provider = 'workable'; tenant = parts[0] === 'api' ? parts[3] : parts[0];
     endpoint = 'https://apply.workable.com/api/v3/accounts/' + tenant + '/jobs';
+  } else if (hostname === 'hn.algolia.com' || hostname === 'news.ycombinator.com' && parts[0] === 'whoishiring') {
+    provider = 'hn'; tenant = 'whoishiring';
+    endpoint = 'https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=6';
   } else if (hostname === 'github.com' || hostname === 'raw.githubusercontent.com') {
     if (parts.length < 2 || !parts.slice(0,2).every(part => pathToken.test(part))) throw new Error('Enter a GitHub repository or Markdown file.');
     provider = 'github'; tenant = parts.slice(0,2).join('/');
@@ -289,6 +292,30 @@ async function workable(source, fetcher, options) {
   }
   throw new SourceError('Workable listing exceeded the supported limit.');
 }
+// Hacker News "Who is hiring?" (startups): the current monthly thread through the public Algolia API.
+const decode = value => plain('<p>'+String(value??'')+'</p>');
+export function hiringRows(thread) {
+  return (thread.children ?? []).filter(comment=>comment?.text && Number.isInteger(comment.id)).flatMap(comment=>{
+    const first = decode(String(comment.text).split(/<p>/i)[0]);
+    const parts = first.split('|').map(trim).filter(Boolean);
+    const links = [...String(comment.text).matchAll(/href="([^"]+)"/gi)].map(match=>absolute(decode(match[1]),'https://example.com/')).filter(Boolean);
+    const url = links.find(link=>postingIdentity(link)) ?? links.find(link=>/greenhouse\.io|ashbyhq\.com|lever\.co|workable\.com|smartrecruiters\.com|myworkdayjobs\.com|\/(?:careers?|jobs?)(?:[\/?#]|$)/i.test(link)) ?? links[0];
+    if (parts.length < 2 || !url) return [];
+    const where = parts.slice(2).filter(part=>/remote|onsite|on-site|hybrid|,|\b(?:US|USA|UK|EU|NYC|SF)\b/i.test(part)&&!/full.?time|part.?time|contract|intern|salary|equity|visa|[€$£]|\d+k\b/i.test(part)&&!/^(?:remote|onsite|on-site|hybrid)$/i.test(part)).join(' · ');
+    const listed = Number(comment.created_at_i) > 0 ? new Date(comment.created_at_i*1000).toISOString() : null;
+    return [{externalId:String(comment.id),url,company:parts[0].slice(0,160),title:parts[1].slice(0,240),location:where.slice(0,240),
+      workMode:/\bremote\b/i.test(first)?'Remote':/\bhybrid\b/i.test(first)?'Hybrid':/\bon-?site\b/i.test(first)?'On-site':'',
+      official:false,listedAt:listed,ageFloor:listed,jd:decode(comment.text).slice(0,JOB_DESCRIPTION_LIMIT)}];
+  });
+}
+async function hackerNews(source, fetcher, options) {
+  const search = await json(await fetcher(source.endpoint,options));
+  const story = (search.hits ?? []).find(hit=>/who is hiring\?/i.test(hit.title ?? '') && /^\d+$/.test(String(hit.objectID)));
+  if (!story) throw new SourceError('No current "Who is hiring?" thread was found.');
+  const thread = await json(await fetcher('https://hn.algolia.com/api/v1/items/'+story.objectID,options));
+  if (String(thread.id) !== String(story.objectID) || !Array.isArray(thread.children)) throw new SourceError('The hiring thread was incomplete.');
+  return { items:hiringRows(thread).map(item=>record({...source,name:'Hacker News'},{...item,attribution:'Hacker News'})) };
+}
 async function workday(source, fetcher, options, quick=false) {
   if (!source.permitted) throw new SourceError('Confirm that this career site permits automated public access before connecting.');
   const result = [];
@@ -377,6 +404,7 @@ export async function collect(source, { fetcher = fetchPublic, signal, full = fa
   const options = {signal, ...(full ? {} : {etag:source.etag,modified:source.modified})};
   if (source.provider === 'workday') return workday(source,fetcher,options,quick && !full);
   if (source.provider === 'smartrecruiters') return smartrecruiters(source,fetcher,{signal});
+  if (source.provider === 'hn') return hackerNews(source,fetcher,{signal});
   if (source.provider === 'workable') return workable(source,fetcher,{signal});
   const response = await fetcher(source.endpoint, options);
   if (response.status === 304) return { unchanged:true };

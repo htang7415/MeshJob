@@ -21,6 +21,8 @@ const DENIED = /(^|\.)(linkedin\.com|jobright\.ai|simplify\.jobs|ycombinator\.co
 
 export const ATS_ORIGINS = ['https://*.greenhouse.io/*','https://*.ashbyhq.com/*','https://*.lever.co/*','https://*.myworkdayjobs.com/*',
   'https://*.myworkdaysite.com/*','https://*.smartrecruiters.com/*','https://*.workable.com/*'];
+// Granted at install (manifest host_permissions): job application sites plus the public job lists MeshJob reads.
+export const LIST_ORIGINS = ['https://raw.githubusercontent.com/*','https://hn.algolia.com/*'];
 export const nowISO = () => new Date().toISOString();
 export const trim = value => String(value ?? '').replace(/\s+/g, ' ').trim();
 export const normalized = value => trim(value).normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}]+/gu, ' ').replace(/\s+/g, ' ').trim();

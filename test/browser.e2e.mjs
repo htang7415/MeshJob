@@ -199,7 +199,7 @@ async function measureWarm(dashboard) {
   }));
 }
 
-test('fresh production build runs without host grants, credentials or external account',async()=>{
+test('fresh production build runs with only job-site host grants and no credentials or external account',async()=>{
   const {context,dashboard,id,close}=await contextFor(baseDist,'production-profile');
   dashboard.setDefaultTimeout(6500);
   try {
@@ -209,9 +209,10 @@ test('fresh production build runs without host grants, credentials or external a
     assert.equal(manifest.version,version);assert.equal(manifest.oauth2,undefined);
     const publicKey=await readFile(new URL('../scripts/extension-public-key.txt',import.meta.url),'utf8');
     assert.equal(manifest.key,publicKey.trim());
-    assert.ok((permissions.origins??[]).every(origin=>origin.startsWith('chrome-extension://')),JSON.stringify(permissions));
+    const {ATS_ORIGINS,LIST_ORIGINS}=await import('../src/domain.js');
+    assert.deepEqual((permissions.origins??[]).filter(origin=>!origin.startsWith('chrome-extension://')).sort(),[...ATS_ORIGINS,...LIST_ORIGINS].sort(),JSON.stringify(permissions));
     await dashboard.getByRole('button',{name:'Set up discovery'}).click();
-    await dashboard.getByRole('checkbox',{name:'Add recommended company job boards'}).waitFor();
+    await dashboard.getByRole('checkbox',{name:/Add recommended company boards/}).waitFor();
     await dashboard.getByRole('button',{name:'Cancel',exact:true}).click();
     await dashboard.getByRole('button',{name:'Skip setup'}).click();
     await dashboard.getByRole('link',{name:'Tracker',exact:true}).click();

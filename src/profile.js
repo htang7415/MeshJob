@@ -1,5 +1,5 @@
 import { db, settings } from './db.js';
-import { ATS_ORIGINS, structuredValue } from './domain.js';
+import { structuredValue } from './domain.js';
 import { ANSWER_PRESETS, fieldQuestion, PROFILE_KEYS } from './form-rules.js';
 import { PRICES, PRICE_VERSION } from './intelligence.js';
 import { MAIL_PROVIDERS } from './mail.js';
@@ -191,13 +191,9 @@ const toggle=(name,label,checked,help)=>{
   return row(label,box,help);
 };
 function jobSearch(config,{searchMode,discoveryPreferences}) {
-  const access=el('span',{},'Checking…');
-  void rpc('integrations:status').then(status=>access.replaceChildren(status.atsAccess?badge('Allowed','ok'):
-    button('Allow',task(async()=>{await permit(ATS_ORIGINS);access.replaceChildren(badge('Allowed','ok'));}),'small'))).catch(()=>{});
   return el('ul',{class:'settings-list'},
     row('Discovery preferences',button('Edit',()=>discoveryPreferences(),'small')),
     row('Search status',button(config.mode,()=>searchMode(config),'small',{'aria-label':'Search '+config.mode.toLowerCase()}),'Pause or finish automatic checks and alerts.'),
-    row('Job application sites',access,'Lets the Side Panel follow Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable pages.'),
     toggle('directAlerts','New job notifications',config.directAlerts));
 }
 function claude(config,usage) {

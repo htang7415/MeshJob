@@ -1,6 +1,6 @@
 import { liveQuery } from 'dexie';
 import { db, settings } from './db.js';
-import { ATS_ORIGINS, distinctValues, freshness, httpUrl, JOB_DESCRIPTION_LIMIT, normalized, preferenceDecision, STAGES, uid } from './domain.js';
+import { distinctValues, freshness, httpUrl, JOB_DESCRIPTION_LIMIT, normalized, preferenceDecision, STAGES, uid } from './domain.js';
 import { BOARD_API_ORIGINS, detectSource } from './sources.js';
 import { analyze, statsPeriod } from './stats.js';
 import { changeStage, deleteApplication, saveApplication, SOURCE_CHOICES, undoEvent } from './tracker.js';
@@ -221,13 +221,9 @@ function discoveryPreferences(setup=false) {
       check('undated','Include jobs without a posting date',view.includeUndated),
       check('applied','Show tracked jobs',view.includeApplied),
       check('hidden','Show hidden jobs',view.showHidden)),
-    setup&&check('catalog','Add recommended company job boards',true),
-    setup&&check('sites','Allow MeshJob on job application sites (Greenhouse, Ashby, Lever, Workday, SmartRecruiters, Workable)',true)
+    setup&&check('catalog','Add recommended company boards and the Hacker News startup list',true)
   ],async values=>{
-    if(values.catalog||values.sites) {
-      await permit([...(values.catalog?['https://boards-api.greenhouse.io/*','https://api.ashbyhq.com/*','https://api.lever.co/*']:[]),...(values.sites?ATS_ORIGINS:[])]);
-      if(values.catalog) await rpc('sources:add',{entries:(await rpc('sources:catalog')).filter(row=>!row.optional)});
-    }
+    if(values.catalog) await rpc('sources:add',{entries:(await rpc('sources:catalog')).filter(row=>!row.optional)});
     await rpc('settings:update',{config:{...(setup?{onboarded:true}:{}),preferences:readPreferences(values)}});
     Object.assign(view,{includeUndated:!!values.undated,includeApplied:!!values.applied,showHidden:!!values.hidden,limit:70});
     redrawResults();

@@ -3,6 +3,7 @@ import { copyFile, cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promi
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zipSync } from 'fflate';
+import { ATS_ORIGINS, LIST_ORIGINS } from '../src/domain.js';
 
 const root=new URL('../',import.meta.url);
 const path=name=>new URL(name,root);
@@ -33,6 +34,7 @@ const manifest={
   manifest_version:3,name:'MeshJob',version,key,description:'Find jobs early, fill applications accurately, and track your search locally.',
   minimum_chrome_version:'120',permissions:['activeTab','scripting','storage','alarms','notifications','sidePanel','declarativeContent'],
   optional_permissions:['identity','webNavigation'],optional_host_permissions:['https://*/*'],
+  host_permissions:[...ATS_ORIGINS,...LIST_ORIGINS],
   action:{default_title:'Open MeshJob',default_icon:{16:'icons/icon16.png',32:'icons/icon32.png'}},
   icons:{16:'icons/icon16.png',32:'icons/icon32.png',48:'icons/icon48.png',128:'icons/icon128.png'},
   background:{service_worker:'background.js'},side_panel:{default_path:'panel.html'},

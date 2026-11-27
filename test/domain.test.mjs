@@ -334,3 +334,19 @@ test('aggregated JSON lists cover many employers with listed dates and sponsorsh
   assert.ok(urls.includes('https://jobs.ashbyhq.com/scaleai')&&urls.includes('https://job-boards.greenhouse.io/scale-ai')&&urls.includes('https://jobs.smartrecruiters.com/ScaleAI'));
   assert.deepEqual(boardCandidates('  '),[]);
 });
+
+test('Hacker News hiring threads list startups with links and listed dates',async()=>{
+  const src=detectSource('https://news.ycombinator.com/whoishiring');
+  assert.equal(src.provider,'hn');assert.equal(src.origin,'https://hn.algolia.com');
+  const now=Math.floor(Date.now()/1000);
+  const thread={id:42,children:[
+    {id:1,created_at_i:now-600,text:'Acme AI | Founding ML Engineer | San Francisco, CA | ONSITE | Full-time, $180k<p>We build agents. Apply: <a href="https:&#x2F;&#x2F;jobs.ashbyhq.com&#x2F;acme-ai">https://jobs.ashbyhq.com/acme-ai</a>'},
+    {id:2,created_at_i:now-600,text:'No link here | Engineer | Remote'},
+    {id:3,created_at_i:now-40*86400,text:'Old Co | Software Engineer | REMOTE (US)<p><a href="https:&#x2F;&#x2F;old.example&#x2F;careers">careers</a>'}
+  ]};
+  const {items}=await collect(src,{fetcher:async url=>url.includes('/items/42')?Response.json(thread):Response.json({hits:[{objectID:'7',title:'Ask HN: Who wants to be hired?'},{objectID:'42',title:'Ask HN: Who is hiring? (November 2026)'}]})});
+  assert.equal(items.length,2);
+  assert.deepEqual([items[0].company,items[0].title,items[0].location,items[0].workMode,items[0].url],['Acme AI','Founding ML Engineer','San Francisco, CA','On-site','https://jobs.ashbyhq.com/acme-ai']);
+  assert.equal(freshness({...items[0],active:true,firstSeenAt:new Date().toISOString()},24),'detected');
+  assert.equal(freshness({...items[1],active:true,firstSeenAt:new Date().toISOString()},24),'older');
+});
