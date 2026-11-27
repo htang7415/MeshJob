@@ -92,7 +92,7 @@ test('public dates are interpreted with provider-specific semantics',async()=>{
     {isListed:false,jobUrl:'https://jobs.ashbyhq.com/example/'+uuid,title:'Unlisted'}
   ]});
   const {items}=await collect(ashby,{fetcher:async()=>json});
-  assert.equal(items.length,1);assert.equal(items[0].postedAt,null);assert.equal(items[0].updatedAt,'2026-10-18T00:00:00Z');
+  assert.equal(items.length,1);assert.equal(items[0].postedAt,'2026-10-18T00:00:00.000Z');assert.equal(items[0].dateEvidence.kind,'Ashby.publishedAt');assert.equal(items[0].ageFloor,'2026-10-18T00:00:00.000Z');
   const careers=detectSource('https://careers.example.com/jobs');
   const row={title:'Developer',datePosted:'2026-10-18T00:00:00Z',url:'https://careers.example.com/jobs/1','@type':'JobPosting',description:'<p>Example</p>'};
   const page=new Response('<script type="application/ld+json">'+JSON.stringify(row)+'</script>');
@@ -222,4 +222,44 @@ test('stats windows group applications by local submission date',async()=>{
     assert.equal(summary.overall.applications,total,period);
     assert.equal(summary.drafts,1);
   }
+});
+
+test('age evidence hides backlog, reposts and undated jobs while new evidence stays visible',async()=>{
+  const {earliest,levelOf,minYears,countriesFromLocation}=await import('../src/domain.js');
+  const {workdayAgeFloor}=await import('../src/sources.js');
+  const at=Date.parse('2026-11-20T12:00:00Z');
+  const base={active:true,official:true,firstSeenAt:'2026-11-20T11:00:00Z'};
+  assert.equal(freshness({...base,postedAt:'2025-03-01T00:00:00Z'},24,at),'older');
+  assert.equal(freshness({...base,ageFloor:'2026-10-01T00:00:00Z'},24,at),'older');
+  assert.equal(freshness({...base,firstSeenAt:'2026-11-17T00:00:00Z'},24,at),'older');
+  assert.equal(freshness({...base},24,at),'unknown');
+  assert.equal(freshness({...base,lastAbsentAt:'2026-11-20T10:50:00Z',repost:true},24,at),'older');
+  assert.equal(freshness({...base,lastAbsentAt:'2026-11-20T10:50:00Z'},24,at),'detected');
+  assert.equal(workdayAgeFloor('Posted 30+ Days Ago',at),new Date(at-30*86400000).toISOString());
+  assert.equal(workdayAgeFloor('Posted Today',at),null);
+  assert.equal(earliest(null,'2026-01-02T00:00:00Z','2025-01-02T00:00:00Z'),'2025-01-02T00:00:00Z');
+  assert.deepEqual(['Senior Software Engineer','Software Engineer II','Engineering Manager','Product Manager','New Grad Software Engineer','Staff Accountant','Software Engineering Intern']
+    .map(title=>levelOf(title)),['Senior','Mid','Manager','','Entry','','Intern']);
+  assert.equal(levelOf('Software Engineer','You have 5+ years of professional experience.'),'Senior');
+  assert.equal(minYears('3-5 years of relevant industry experience; 7 years preferred experience'),3);
+  assert.deepEqual(countriesFromLocation('San Francisco, CA'),['United States']);
+  assert.deepEqual(countriesFromLocation('London'),['United Kingdom']);
+  assert.deepEqual(countriesFromLocation('Remote - US'),['United States']);
+  assert.deepEqual(countriesFromLocation('Remote'),[]);
+  const p={titles:['Software Engineer'],countries:['United States'],seniority:['Entry level'],maxYears:2};
+  assert.ok(!preferenceDecision({title:'Software Engineer',location:'London'},p).eligible);
+  assert.ok(!preferenceDecision({title:'Senior Software Engineer',seniority:'Senior',location:'Austin, TX'},p).eligible);
+  assert.ok(!preferenceDecision({title:'Software Engineer',minYears:5,location:'Austin, TX'},p).eligible);
+  const shown=preferenceDecision({title:'Backend Engineer',location:'Austin, TX'},p);
+  assert.ok(shown.eligible);assert.equal(shown.matched,'backend engineer');assert.deepEqual(shown.unknown,['Level']);
+});
+test('ATS listings carry original timestamps and Lever countries',async()=>{
+  const gh=detectSource('https://job-boards.greenhouse.io/example');
+  const g=await collect(gh,{fetcher:async()=>Response.json({jobs:[{id:5,internal_job_id:1,title:'Engineer',absolute_url:'https://job-boards.greenhouse.io/example/jobs/5',
+    updated_at:'2026-11-19T10:00:00-05:00',first_published:'2024-01-02T10:00:00-05:00'}]})});
+  assert.equal(g.items[0].postedAt,'2024-01-02T15:00:00.000Z');
+  const lever=detectSource('https://jobs.lever.co/example');
+  const id='13e1e478-6330-47c5-9fb0-d07889111cc2';
+  const l=await collect(lever,{fetcher:async()=>Response.json([{id,text:'Engineer',createdAt:Date.parse('2026-11-01T00:00:00Z'),country:'SG',hostedUrl:'https://jobs.lever.co/example/'+id}])});
+  assert.equal(l.items[0].postedAt,'2026-11-01T00:00:00.000Z');assert.deepEqual(l.items[0].countries,['Singapore']);
 });

@@ -180,7 +180,7 @@ const listSetting=z.array(z.string().max(240)).max(100);
 const cost=z.number().finite().min(0).max(10000);
 const configSchema=z.object({
   preferences:z.object(Object.fromEntries(Object.entries(PREFERENCES).map(([name,value])=>[name,
-    Array.isArray(value)?listSetting.optional():name==='minimumPay'?z.number().nonnegative().nullable().optional():
+    Array.isArray(value)?listSetting.optional():name==='minimumPay'?z.number().nonnegative().nullable().optional():name==='maxYears'?z.number().int().min(0).max(40).nullable().optional():
       typeof value==='boolean'?z.boolean().optional():typeof value==='number'?z.number().int().min(1).max(720).optional():z.string().max(60).optional()
   ]))).optional(),
   profile:z.object({
@@ -226,7 +226,7 @@ const job=z.object({
   company:z.string().max(240),title:z.string().min(1).max(300),sourceIds:z.array(z.string().max(4500)).max(100),
   countries:listSetting.optional(),
   ...textual(['provider','externalId','requisition','location','locationDetails','workMode','employmentType','seniority','attribution','roleCategory','postingLabel','evidence','jdHash','matchKey'],500),
-  ...dates(['postedAt','updatedAt','lastAbsentAt','closedAt','reopenedAt','notifiedAt','jdAt','jdUpdatedAt']),firstSeenAt:date,
+  ...dates(['postedAt','updatedAt','lastAbsentAt','closedAt','reopenedAt','notifiedAt','jdAt','jdUpdatedAt','ageFloor']),firstSeenAt:date,repost:z.boolean().optional(),minYears:z.number().int().min(0).max(40).nullish(),
   active:z.boolean(),official:z.boolean(),manual:z.boolean().optional(),lead:z.boolean().optional(),hidden:z.boolean().optional(),identityReview:z.boolean().optional(),
   jd:z.string().max(JOB_DESCRIPTION_LIMIT).nullish(),members:z.record(z.string(),z.object({active:z.boolean(),key:z.string(),official:z.boolean().optional(),firstSeenAt:date.optional(),lastSeenAt:date.optional()})),
   dateEvidence:z.object({date:z.string(),kind:z.string().optional(),url:publicLink}).optional(),

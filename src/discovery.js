@@ -1,5 +1,5 @@
 import { db, guarded, settings } from './db.js';
-import { backoffMs, freshness, hash, normalized, nowISO, preferenceDecision, sponsorshipEvidence, uid } from './domain.js';
+import { backoffMs, earliest, freshness, hash, levelOf, minYears, normalized, nowISO, preferenceDecision, sponsorshipEvidence, uid } from './domain.js';
 import { collect, fetchPublic, jobDetails, verifyOfficialPosting } from './sources.js';
 import { findJob } from './tracker.js';
 
@@ -19,6 +19,8 @@ export async function saveSnapshot(source, snapshot, generation, startedAt = now
     const previous = await db.jobs.where('sourceIds').equals(source.id).toArray();
     const seen = new Set();
     const changed = [];
+    const repostWindow = Date.now()-30*86_400_000;
+    const sameListing = (a,b) => normalized(a.title)===normalized(b.title) && normalized(a.location)===normalized(b.location);
     const uninterrupted = current.lastCompleteAt && !current.failures &&
       Date.parse(startedAt)-Date.parse(current.lastCompleteAt) <= intervalMs(current)*1.55;
     for (const {jd, ...item} of snapshot.items) {
@@ -39,6 +41,9 @@ export async function saveSnapshot(source, snapshot, generation, startedAt = now
         urls:[...new Set([...(existing?.urls ?? []),item.url])],
         official:Object.values(members).some(member => member.active && member.official),
         postedAt:existing?.postedAt ?? item.postedAt ?? null,
+        ageFloor:earliest(existing?.ageFloor, item.ageFloor, existing?.postedAt),
+        repost:existing ? existing.repost : !!current.lastCompleteAt && previous.some(other => other.members?.[source.id]?.key !== item.key && sameListing(other,item) &&
+          (other.members?.[source.id]?.active || Date.parse(other.closedAt ?? '') > repostWindow)),
         dateEvidence:existing?.dateEvidence ?? item.dateEvidence,
         ...(reopened ? {reopenedAt:checkAt,closedAt:null} : {}),
         ...(existing && !sameRole && (reopened || !existing.active) ? {identityReview:true,match:null} : {})
@@ -102,11 +107,12 @@ export async function candidateDetails({job,item},source,{config,generation,sign
   }
   if (!result.jd) return job;
   const jdHash = await hash(normalized(result.jd));
+  const years = minYears(result.jd);
   const sponsorship = sponsorshipEvidence(result.jd,job.url,job.userVisaEvidence);
-  const candidate = {...job,sponsorship};
+  const candidate = {...job,sponsorship,minYears:minYears(result.jd)};
   const allowed = preferenceDecision(candidate,config.preferences).eligible;
   const updates = {
-    sponsorship,requisition:result.requisition ?? job.requisition,jdHash,
+    sponsorship,requisition:result.requisition ?? job.requisition,jdHash,minYears:years,seniority:job.seniority || levelOf(job.title,result.jd),
     jd:allowed ? result.jd : null,jdAt:allowed ? nowISO() : null,jdUpdatedAt:result.updatedAt,
     ...(job.jdHash && job.jdHash !== jdHash ? {match:null,matchKey:null} : {})
   };

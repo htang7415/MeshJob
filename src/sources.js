@@ -1,5 +1,5 @@
 import { parseDocument, DomUtils } from 'htmlparser2';
-import { canonicalUrl, publicUrl, hasJobPath, exactDate, JOB_DESCRIPTION_LIMIT, trim, workdayEmployer } from './domain.js';
+import { canonicalUrl, publicUrl, hasJobPath, exactDate, earliest, JOB_DESCRIPTION_LIMIT, levelOf, trim, workdayEmployer } from './domain.js';
 
 const { findAll, findOne, textContent } = DomUtils;
 const pathToken = /^[\w.-]{1,100}$/;
@@ -181,14 +181,11 @@ export function jsonPostings(html, base) {
 const countryNames=new Intl.DisplayNames(['en'],{type:'region'});
 const countriesName=value=>typeof value!=='string'?'':/^[A-Z]{2}$/.test(value)?countryNames.of(value):
   ({USA:'United States',UK:'United Kingdom'})[value]??value;
-function declaredSeniority(title) {
-  const role=String(title??'');
-  if (/\b(?:intern(?:ship)?|apprentice)\b/i.test(role)) return 'Internship';
-  if (/\b(?:new grad(?:uate)?|early career|entry[- ]level|junior|jr\.?)\b/i.test(role)) return 'Entry level';
-  if (/\b(?:senior|sr\.?)\b/i.test(role)) return 'Senior';
-  if (/\b(?:principal|distinguished)\b/i.test(role)) return 'Principal';
-  if (/^staff (?:software|design|product|data|security|engineer)/i.test(role)) return 'Staff';
-  return '';
+// Workday shows only relative labels; they bound age from below but never prove recency.
+export function workdayAgeFloor(label, at = Date.now()) {
+  const text=String(label??'').toLowerCase();
+  const days=/yesterday/.test(text)?1:Number(/(\d+)\+?\s*days?\s*ago/.exec(text)?.[1]);
+  return Number.isFinite(days)&&days>=1?new Date(at-days*86_400_000).toISOString():null;
 }
 function record(source, item) {
   const url = canonicalUrl(item.url);
@@ -197,9 +194,10 @@ function record(source, item) {
   const externalId = item.externalId || identity?.externalId || url;
   const key = source.id + ':' + externalId;
   const keys = [...new Set([key,identity?.key].filter(Boolean))];
-  return { ...item, seniority:item.seniority||declaredSeniority(item.title), externalId, key, keys, url, company:item.company || source.name || source.tenant,
+  const postedAt = exactDate(item.postedAt) ? new Date(item.postedAt).toISOString() : null;
+  return { ...item, seniority:item.seniority||levelOf(item.title), ageFloor:earliest(item.ageFloor, postedAt), externalId, key, keys, url, company:item.company || source.name || source.tenant,
     official:item.official ?? !['rss','github'].includes(source.provider), provider:identity?.source.provider ?? source.provider,
-    postedAt:exactDate(item.postedAt) ? new Date(item.postedAt).toISOString() : null,
+    postedAt,
     dateEvidence:item.postedAt ? { date:item.postedAt, kind:item.dateKind, url:item.evidenceUrl ?? source.endpoint } : undefined };
 }
 
@@ -254,7 +252,7 @@ async function workday(source, fetcher, options) {
       if (typeof line.externalPath!=='string' || !line.externalPath.startsWith('/job/')) throw new SourceError('Workday returned an unrecognized posting path.');
       const externalId = workdayId(line.externalPath ?? '') ?? line.bulletFields?.[0] ?? line.externalPath;
       const url = absolute('/' + source.site + line.externalPath,source.origin);
-      result.push(record(source,{ externalId,url,title:line.title,location:line.locationsText,postingLabel:line.postedOn }));
+      result.push(record(source,{ externalId,url,title:line.title,location:line.locationsText,postingLabel:line.postedOn,ageFloor:workdayAgeFloor(line.postedOn) }));
     }
     if (result.length === total) {
       if (new Set(result.map(item => item.key)).size !== total) throw new SourceError('Workday pagination repeated job IDs.');
@@ -317,7 +315,7 @@ export async function collect(source, { fetcher = fetchPublic, signal, full = fa
     if (!Array.isArray(data.jobs) || (data.meta?.total != null && data.meta.total !== data.jobs.length)) throw new SourceError('Greenhouse listing was incomplete.');
     items = data.jobs.filter(job => job.internal_job_id !== null).map(job => ({
       externalId:String(job.id), requisition:job.requisition_id, title:job.title, company:data.name, location:job.location?.name,
-      url:job.absolute_url, updatedAt:job.updated_at, jd:job.content ? plain(job.content) : undefined
+      url:job.absolute_url, updatedAt:job.updated_at, postedAt:job.first_published, dateKind:'Greenhouse.first_published', jd:job.content ? plain(job.content) : undefined
     }));
   } else if (source.provider === 'ashby') {
     const data = await json(response);
@@ -335,13 +333,15 @@ export async function collect(source, { fetcher = fetchPublic, signal, full = fa
         countries:addresses.map(address=>countriesName(address.addressCountry)).filter(Boolean),
         locationCertain:!!addresses[0]?.addressLocality&&!job.isRemote,
         workMode:titleCase(job.workplaceType ?? (job.isRemote ? 'Remote' : '')), employmentType:employment[job.employmentType] ?? job.employmentType,
-        url:job.applyUrl || job.jobUrl, updatedAt:job.publishedAt, jd:job.descriptionPlain?.slice(0,48_000) ?? plain(job.descriptionHtml),
+        url:job.applyUrl || job.jobUrl, updatedAt:job.publishedAt, postedAt:job.publishedAt, dateKind:'Ashby.publishedAt', jd:job.descriptionPlain?.slice(0,48_000) ?? plain(job.descriptionHtml),
         salary:comp ? {min:comp.minValue,max:comp.maxValue,currency:comp.currency,period:period(comp.interval)} : undefined };
     });
   } else if (source.provider === 'lever') {
     const data = await json(response);
     if (!Array.isArray(data) || data.length >= 10000) throw new SourceError('Invalid or excessive Lever listing.');
-    items = data.map(job => ({ externalId:job.id,title:job.text,location:job.categories?.allLocations?.join(' · ') || job.categories?.location,
+    items = data.map(job => ({ externalId:job.id,title:job.text,
+      postedAt:Number.isFinite(job.createdAt)?new Date(job.createdAt).toISOString():undefined,dateKind:'Lever.createdAt',
+      countries:typeof job.country==='string'&&/^[A-Z]{2}$/.test(job.country)?[countriesName(job.country)]:undefined,location:job.categories?.allLocations?.join(' · ') || job.categories?.location,
       employmentType:job.categories?.commitment,workMode:titleCase(job.workplaceType),url:job.applyUrl || job.hostedUrl,
       jd:[job.descriptionPlain,job.additionalPlain,...(job.lists ?? []).map(section => plain(section.text + ' ' + section.content))].filter(Boolean).join('\n').slice(0,48_000),
       salary:job.salaryRange ? {min:job.salaryRange.min,max:job.salaryRange.max,currency:job.salaryRange.currency,period:period(job.salaryRange.interval)} : undefined }));

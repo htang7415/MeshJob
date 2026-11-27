@@ -7,11 +7,11 @@ import { changeStage, deleteApplication, saveApplication, undoEvent } from './tr
 import { applicationCSV, csvPreview, eventsCSV, importApplicationCSV, jobsCSV, makeBackup, readSources, sourcePack, sourcesCSV } from './portability.js';
 import { blank,badge,button,check,dataTable,dateLabel,download,el,field,formDialog,input,link,paragraph,permit,readTokens,rpc,section,select,task,textarea,toast,tokenField } from './ui.js';
 import { profileView } from './profile.js';
-import { COUNTRY_OPTIONS, EMPLOYMENT_TYPES, EXPERIENCE_LEVELS, PRIORITIES, regionOptions, WORKPLACE_TYPES } from './preferences.js';
+import { COUNTRY_OPTIONS, EMPLOYMENT_TYPES, LEVELS, normalizeLevels, PRIORITIES, regionOptions, WORKPLACE_TYPES } from './preferences.js';
 
 const root=document.querySelector('#app');
 const tabs=['Discover','Tracker','Stats','Profile'];
-const view={query:'',sort:'recent',verifiedOnly:false,includeApplied:false,showHidden:false,
+const view={query:'',sort:'recent',includeUndated:false,includeApplied:false,showHidden:false,
   trackQuery:'',stage:'',includeResolved:false,trackerMode:'table',month:new Date(),statsRange:'all',limit:70};
 let shell,main,nav,modeButton,subscription,routeData,routeKey;
 const selected=()=>tabs.find(title=>title.toLowerCase()===location.hash.slice(1).split('/')[0])??'Discover';
@@ -22,7 +22,7 @@ const timestamp=value=>el('time',{datetime:value},dateLabel(value));
 const stageStyle=stage=>['Applied','OA','Interview','Offer','Accepted'].includes(stage)?'ok':['Rejected','Withdrawn'].includes(stage)?'muted':'warn';
 const smallSearch=(id,value,label,fn)=>input(id,value,{id,type:'search',placeholder:label,'aria-label':label,oninput:event=>fn(event.target.value)});
 const origin=url=>new URL(url).origin+'/*';
-const niceAge={verified:'Verified recent',detected:'Newly detected',unknown:'Date unverified',older:'Older posting'};
+const niceAge={verified:'New',detected:'Newly detected',unknown:'Date unknown',older:'Older'};
 const pageHead=(title,subtitle,actions)=>el('header',{class:'page-head'},el('div',{},el('h1',{},title),paragraph(subtitle)),actions&&el('div',{class:'actions'},actions));
 
 function runDialog(label,type,args,message) {
@@ -150,10 +150,12 @@ function storageHelp() {
 
 const preferenceLists=['titles','countries','locations','seniority','employmentType','workMode'];
 
+const optionalNumber=value=>value===''||value==null?null:Number(value);
 function readPreferences(values) {
   return {
-    ...Object.fromEntries(preferenceLists.map(key=>[key,readTokens(values,key)])),
-    sponsorship:values.sponsorship||'Unspecified',
+    ...Object.fromEntries([...preferenceLists,'excludeTitles','excludeCompanies'].map(key=>[key,readTokens(values,key)])),
+    sponsorship:values.sponsorship||'Unspecified',maxYears:optionalNumber(values.maxYears),minimumPay:optionalNumber(values.minimumPay),
+    currency:(values.currency||'USD').toUpperCase().slice(0,3),period:values.period||'year',
     ...(values.freshnessHours ? {freshnessHours:Number(values.freshnessHours)} : {})
   };
 }
@@ -168,14 +170,21 @@ function preferencesForm(p) {
   return el('div',{class:'stack large preference-fields'},
     tokenField('titles','Target job titles',p.titles,{placeholder:'Software engineer, Data analyst'}).root,
     el('div',{class:'form-grid'},country.root,regions.root,
-      tokenField('seniority','Experience level',p.seniority,{choices:EXPERIENCE_LEVELS,custom:false}).root,
-      tokenField('employmentType','Employment type',p.employmentType,{choices:EMPLOYMENT_TYPES,custom:false}).root,
+      tokenField('seniority','Level',normalizeLevels(p.seniority),{choices:LEVELS,custom:false}).root,
       tokenField('workMode','Workplace type',p.workMode,{choices:WORKPLACE_TYPES,custom:false}).root,
       field('Visa sponsorship',select('sponsorship',[['Unspecified','No preference'],'Required','Not required'],p.sponsorship)),
       field('Date posted',select('freshnessHours',[
         ['24','Past 24 hours'],['168','Past week'],['720','Past month'],
         ...([24,168,720].includes(p.freshnessHours)?[]:[[String(p.freshnessHours),'Past '+p.freshnessHours+' hours']])
-      ],String(p.freshnessHours)),'Includes jobs with unverified posting dates by default.'))
+      ],String(p.freshnessHours)))),
+    el('details',{class:'more'},el('summary',{},'More'),el('div',{class:'form-grid'},
+      tokenField('excludeTitles','Exclude title words',p.excludeTitles,{placeholder:'Senior, Manager'}).root,
+      tokenField('excludeCompanies','Exclude companies',p.excludeCompanies,{}).root,
+      field('Maximum years required',input('maxYears',p.maxYears??'',{type:'number',min:0,max:40,placeholder:'Any'})),
+      tokenField('employmentType','Employment type',p.employmentType,{choices:EMPLOYMENT_TYPES,custom:false}).root,
+      field('Minimum pay',input('minimumPay',p.minimumPay??'',{type:'number',min:0,placeholder:'Any'})),
+      el('div',{class:'form-grid'},field('Currency',input('currency',p.currency??'USD',{maxlength:3})),
+        field('Per',select('period',[['year','Year'],['month','Month'],['hour','Hour']],p.period??'year')))))
   );
 }
 function discoveryPreferences(setup=false) {
@@ -183,7 +192,7 @@ function discoveryPreferences(setup=false) {
   formDialog(setup?'Set up discovery':'Preferences',[
     preferencesForm(config.preferences),
     el('div',{class:'discovery-options stack'},
-      check('verifiedOnly','Only show jobs with a verified posting date',view.verifiedOnly),
+      check('undated','Include jobs without a posting date',view.includeUndated),
       check('applied','Show tracked jobs',view.includeApplied),
       check('hidden','Show hidden jobs',view.showHidden)),
     setup&&check('catalog','Add recommended company job boards'),
@@ -195,7 +204,7 @@ function discoveryPreferences(setup=false) {
       await rpc('sources:add',{entries:catalog});
     }
     await rpc('settings:update',{config:{...(setup?{onboarded:true}:{}),preferences:readPreferences(values)}});
-    Object.assign(view,{verifiedOnly:!!values.verifiedOnly,includeApplied:!!values.applied,showHidden:!!values.hidden,limit:70});
+    Object.assign(view,{includeUndated:!!values.undated,includeApplied:!!values.applied,showHidden:!!values.hidden,limit:70});
     redrawResults();
     toast('Preferences saved.');
   },setup?'Start discovery':'Save preferences');
@@ -244,7 +253,7 @@ function filteredJobs(data) {
     if(!preferenceDecision(job,config.preferences).eligible) return false;
     if(query&&!normalized([job.title,job.company,job.location].join(' ')).includes(query)) return false;
     const age=freshness(job,config.preferences.freshnessHours);
-    return view.verifiedOnly?age==='verified':age!=='older';
+    return age==='verified'||age==='detected'||view.includeUndated&&age==='unknown';
   }).sort((a,b)=>{
     if(a.id===targeted) return -1;if(b.id===targeted) return 1;
     if(view.sort==='match') {
@@ -559,7 +568,7 @@ function applicationEditor(app,description='') {
   }
   const {dialog}=formDialog(app?'Edit application':'Add application',[
     el('div',{class:'form-grid'},field('Company',formFields.company),field('Job title',formFields.title),field('Job URL',formFields.url),field('Requisition ID',formFields.requisition),field('Location',formFields.location),field('Source',formFields.source),
-      pickOptional('seniority','Experience level',EXPERIENCE_LEVELS,app?.seniority),
+      pickOptional('seniority','Level',LEVELS,app?.seniority),
       pickOptional('workMode','Workplace type',WORKPLACE_TYPES,app?.workMode),
       pickOptional('priority','Priority',PRIORITIES,app?.priority)),
     button('Read public job URL',task(async()=>{

@@ -43,6 +43,20 @@ test('baseline, complete diff, failures, reopening and lifecycle commit gate',as
   assert.equal(await saveSnapshot(source,{items:[]},0),null);
   assert.equal((await db.jobs.get(newJob.id)).active,true);
 });
+test('a new board adds no backlog and a same-role relisting is a repost',async()=>{
+  await db.sources.add(source);
+  const old=new Date(Date.now()-4*60_000).toISOString();
+  await saveSnapshot(source,{items:[row(1,'Engineer'),row(2,'Designer')]},0,old);
+  const {freshness}=await import('../src/domain.js');
+  const later=Date.now()+25*3600_000;
+  assert.ok((await db.jobs.toArray()).every(job=>freshness(job,24,later)==='older'&&freshness(job,24)==='unknown'));
+  await saveSnapshot(source,{items:[row(2,'Designer'),row(3,'Engineer')]},0);
+  await saveSnapshot(source,{items:[row(2,'Designer'),row(3,'Engineer'),row(4,'Analyst')]},0);
+  const jobs=await db.jobs.toArray();
+  assert.equal(jobs.find(job=>job.externalId==='3').repost,true);
+  const fresh=jobs.find(job=>job.externalId==='4');
+  assert.equal(fresh.repost,false);assert.equal(freshness(fresh,24),'detected');
+});
 test('manual tracking changes survive backups and deletion retains the job and mail deduplication',async()=>{
   const {application}=await saveApplication(fixtureJob,{stage:'Preparing'});
   const applicationId=application.id;

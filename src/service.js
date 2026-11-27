@@ -112,9 +112,9 @@ export async function testNotification() {
 }
 
 async function directAlert(job,source,config,generation,signal) {
-  if (!config.directAlerts || !config.preferences.titles.length || !job.official || job.identityReview || job.notifiedAt || !job.postedAt ||
-    freshness(job,Math.min(24,config.preferences.freshnessHours)) !== 'verified' ||
-    !preferenceDecision(job,config.preferences).eligible || config.modeChangedAt && job.postedAt < config.modeChangedAt ||
+  if (!config.directAlerts || !config.preferences.titles.length || !job.official || job.identityReview || job.notifiedAt || job.repost ||
+    !['verified','detected'].includes(freshness(job,Math.min(24,config.preferences.freshnessHours))) ||
+    !preferenceDecision(job,config.preferences).eligible || config.modeChangedAt && (job.postedAt||job.firstSeenAt) < config.modeChangedAt ||
     await db.applications.where('jobId').equals(job.id).first()) return;
   await checkMode(generation,signal);
   const id = 'meshjob:job:'+job.id;
