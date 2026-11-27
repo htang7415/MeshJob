@@ -268,15 +268,24 @@ const handlers={
     if(key) await chrome.storage.local.set({claudeKey:key});else await chrome.storage.local.remove('claudeKey');
     return {connected:!!key};
   },
+  // Preset sign-up details for ATS account creation; Chrome Password Manager saves the account after sign-up (spec 4).
   'secret:registration':async message=>{
-    const email=String(message.email??'').trim();
-    if(email&&(email.length>254||!(/^[^\s@]+@[^\s@]+$/).test(email))) throw new Error('Enter a valid registration email.');
-    if(email) await chrome.storage.local.set({registrationEmail:email});else await chrome.storage.local.remove('registrationEmail');
+    if(message.email!==undefined) {
+      const email=String(message.email??'').trim();
+      if(email&&(email.length>254||!(/^[^\s@]+@[^\s@]+$/).test(email))) throw new Error('Enter a valid registration email.');
+      if(email) await chrome.storage.local.set({registrationEmail:email});else await chrome.storage.local.remove('registrationEmail');
+    }
+    if(message.password!==undefined) {
+      const password=String(message.password??'');
+      if(password.length>256) throw new Error('The password is too long.');
+      if(password&&password.length<8) throw new Error('Use at least 8 characters.');
+      if(password) await chrome.storage.local.set({registrationPassword:password});else await chrome.storage.local.remove('registrationPassword');
+    }
     return true;
   },
   'integrations:status':async ()=>{
-    const local=await chrome.storage.local.get(['claudeKey','registrationEmail','mailAccount','gmailClientId','outlookClientId']);
-    return {claude:!!local.claudeKey,registrationEmail:local.registrationEmail??'',mailAccount:local.mailAccount??'',
+    const local=await chrome.storage.local.get(['claudeKey','registrationEmail','registrationPassword','mailAccount','gmailClientId','outlookClientId']);
+    return {claude:!!local.claudeKey,registrationEmail:local.registrationEmail??'',registrationPassword:!!local.registrationPassword,mailAccount:local.mailAccount??'',
       clients:{gmail:local.gmailClientId??'',outlook:local.outlookClientId??''},mailRedirect:redirectUri(),extensionId:chrome.runtime.id,
       atsAccess:await chrome.permissions.contains({origins:ATS_ORIGINS})};
   },
@@ -493,16 +502,17 @@ const handlers={
     const app=await db.applications.get(message.applicationId);
     if(!app) throw new Error('Prepare this application first.');
     await formContext(message,app);
-    const [local,config]=await Promise.all([chrome.storage.local.get('registrationEmail'),settings()]);
+    const [local,config]=await Promise.all([chrome.storage.local.get(['registrationEmail','registrationPassword']),settings()]);
     const email=local.registrationEmail||config.profile.email;
-    if(!email) throw new Error('Add your email in Settings.');
-    return sendForm(message.tabId,'registration',{revision:message.revision,url:message.page,email});
+    if(!email&&!local.registrationPassword) throw new Error('Add a registration email and password in Settings.');
+    // The password goes only to the verified registration form in this tab, never to AI, logs or backups.
+    return sendForm(message.tabId,'registration',{revision:message.revision,url:message.page,email,value:local.registrationPassword});
   },
   'data:clear':async message=>{
     if(message.confirm!=='DELETE') throw new Error('Type DELETE to remove local MeshJob data.');
     await setMode('Finished');
     stopMail();
-    await Promise.all([chrome.storage.local.remove(['claudeKey','registrationEmail']),disconnectMail(false)]);
+    await Promise.all([chrome.storage.local.remove(['claudeKey','registrationEmail','registrationPassword']),disconnectMail(false)]);
     await db.transaction('rw',db.tables,async()=>{
       await Promise.all(db.tables.filter(table=>table!==db.settings).map(table=>table.clear()));
       const before=await settings();

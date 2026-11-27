@@ -296,10 +296,23 @@ function email(config,health) {
     el('details',{class:'more'},el('summary',{},'Advanced'),advanced)];
 }
 function registrationEmail(config) {
-  const value=input('registrationEmail','',{type:'email',placeholder:config.profile.email||'name@example.com','aria-label':'Registration email',maxlength:254});
-  void rpc('integrations:status').then(data=>{value.value=data.registrationEmail;}).catch(()=>{});
-  value.addEventListener('change',task(()=>rpc('secret:registration',{email:value.value}),'Registration email saved.'));
-  return el('ul',{class:'settings-list'},row('Registration email',value,'Used on ATS sign-up forms. Chrome Password Manager handles passwords.'));
+  const email=input('registrationEmail','',{type:'email',placeholder:config.profile.email||'name@example.com','aria-label':'Registration email',maxlength:254});
+  const password=input('registrationPassword','',{type:'password',autocomplete:'new-password','aria-label':'Registration password',maxlength:256,placeholder:'Not set'});
+  const clear=button('Clear',task(async()=>{await rpc('secret:registration',{password:''});password.value='';password.placeholder='Not set';clear.hidden=true;},'Password cleared.'),'quiet small');
+  void rpc('integrations:status').then(data=>{
+    email.value=data.registrationEmail;
+    if(data.registrationPassword) password.placeholder='Saved · type to replace';else clear.hidden=true;
+  }).catch(()=>{});
+  email.addEventListener('change',task(()=>rpc('secret:registration',{email:email.value}),'Registration email saved.'));
+  password.addEventListener('change',task(async()=>{
+    if(!password.value) return;
+    await rpc('secret:registration',{password:password.value});
+    password.value='';password.placeholder='Saved · type to replace';clear.hidden=false;
+  },'Registration password saved.'));
+  return el('ul',{class:'settings-list'},
+    row('Registration email',email,'Filled on ATS sign-up forms.'),
+    row('Registration password',el('span',{class:'actions'},password,clear),
+      'Filled on ATS sign-up forms. Stored only on this device, unencrypted, never in backups. Chrome Password Manager saves each account after you sign up; a unique password per site is safer.'));
 }
 function restoreDialog() {
   const file=input('backup','',{type:'file',accept:'.zip,application/zip',required:true});

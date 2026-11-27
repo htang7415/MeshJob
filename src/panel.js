@@ -354,16 +354,16 @@ function formView() {
   return [
     challenge&&notice('Verification required','Complete it on the page. MeshJob continues afterwards.'),
     login&&notice('Sign in required','Sign in on the page with Chrome Password Manager.'),
-    registration&&notice('Create an account','Create the account yourself. MeshJob can fill your email.'),
+    registration&&notice('Create an account','MeshJob fills your preset email and password. Submit the form yourself; Chrome Password Manager then offers to save the account.'),
     jobCard(state.app),
     el('section',{class:'group'},
       el('p',{class:'progress','aria-live':'polite'},[found.job.provider==='workday'&&found.step,fields.length?fields.length+' fields · '+open.length+' required to fill':'Waiting for the form…'].filter(Boolean).join(' · ')),
       needsEmbed?button('Allow Greenhouse form',task(async()=>{await permit([embedded.origin+'/*'],['webNavigation']);await scan();}),'primary wide'):
         state.busy?el('div',{class:'actions'},el('span',{class:'subtle',role:'status'},'Filling…'),button('Stop',task(stopFill),'small')):
           button(state.app&&found.job.provider==='workday'&&found.step?'Fill this page':'Autofill',task(()=>busyWith(fillPage)),'primary wide',{disabled:!fields.length||challenge||login||!!receipt}),
-      registration&&button('Fill registration email',task(async()=>{
+      registration&&button('Fill sign-up details',task(async()=>{
         await ensureApp();
-        const r=await rpc('form:registration',pageRef());toast(r.count?'Email filled.':'No empty email field.');
+        const r=await rpc('form:registration',pageRef());toast(r.count?r.count+' sign-up fields filled.':'No empty sign-up fields.');
       }),'wide')),
     open.length>0&&list('Needs you',open.slice(0,30).map(row=>el('li',{},el('button',{type:'button',class:'row-button',onclick:task(()=>focusField(row.id))},
       el('span',{},row.label||'Unlabeled field'),el('small',{},row.critical?'Your answer':row.consent?'Review on page':row.type==='file'?'Upload':''))))),

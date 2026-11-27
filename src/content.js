@@ -437,15 +437,28 @@ import { cleanLabel, consentField, criticalField, fieldKey, greenhouseEmbed, lea
   }
   function fillRegistration(message) {
     if (busy || message.url!==expectedUrl() || message.revision!==revision || !blockers().registration || blockers().challenge ||
-      location.protocol!=='https:' || !/^(?:ashby|greenhouse|lever|workday)$/.test(providerOf())) throw new Error('Open a verified registration form before filling the email.');
-    const emails=visibleFields().filter(node=>node instanceof HTMLInputElement&&
+      location.protocol!=='https:' || !/^(?:ashby|greenhouse|lever|workday|smartrecruiters|workable)$/.test(providerOf())) throw new Error('Open a verified registration form before filling sign-up details.');
+    const passwords=[...doc.querySelectorAll('input[type=password]')].filter(visible);
+    const form=passwords[0]?.form;
+    if(passwords.length>2||passwords.some(node=>node.form!==form)) throw new Error('Fill this registration form manually.');
+    const emails=visibleFields().filter(node=>node instanceof HTMLInputElement&&(!form||node.form===form)&&
       registrationEmailField({type:node.type,label:nativeLabel(node),name:node.name,autocomplete:node.autocomplete}));
     if(emails.length>2) throw new Error('Fill this registration form manually.');
+    const {email,value}=message;
+    if(email&&value&&emails.some(node=>node.value&&node.value.toLowerCase()!==email.toLowerCase())) {
+      throw new Error('The registration form has a different email. Review it before filling the saved password.');
+    }
+    const writable=node=>!node.value&&!node.matches(':disabled,[aria-disabled="true"],[readonly]');
     let count=0;
     for(const node of emails) {
-      if(message.email&&!node.value&&!node.matches(':disabled,[aria-disabled="true"],[readonly]')) {
-        setNative(node,message.email);
-        if(node.value===message.email) count++;
+      if(email&&writable(node)) {setNative(node,email);if(node.value===email) count++;}
+    }
+    // New-password and confirmation fields only; never a login field.
+    if(value&&passwords.every(node=>/^(?:new-password)?$/.test(node.autocomplete)&&/\bpassword\b/i.test(nativeLabel(node)))) {
+      for(const node of passwords) {
+        if(!writable(node)) continue;
+        setNative(node,value);
+        if(node.value===value) count++;
       }
     }
     return {count};

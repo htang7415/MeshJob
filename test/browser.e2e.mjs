@@ -284,11 +284,15 @@ test('fresh production build runs without host grants, credentials or external a
     await dashboard.getByRole('link',{name:'Settings',exact:true}).click();
     await dashboard.getByRole('heading',{name:'Registration',exact:true}).waitFor();
     for(const label of ['Model','Monthly budget in USD']) assert.equal(await dashboard.getByLabel(label,{exact:true}).count(),1);
-    for(const removed of ['Rounds per day','Web searches per round','Daily budget · USD','Recovery window in days','New password'])
+    for(const removed of ['Rounds per day','Web searches per round','Daily budget · USD','Recovery window in days'])
       assert.equal(await dashboard.getByText(removed,{exact:true}).count(),0,removed);
     const registrationField=dashboard.getByLabel('Registration email',{exact:true});
     await registrationField.fill(registrationEmail);await registrationField.press('Tab');
     await until(async()=>(await rpc(dashboard,'integrations:status')).registrationEmail===registrationEmail);
+    const passwordField=dashboard.getByLabel('Registration password',{exact:true});
+    await passwordField.fill(registrationPassword);await passwordField.press('Tab');
+    await until(async()=>(await rpc(dashboard,'integrations:status')).registrationPassword===true);
+    assert.equal(await passwordField.inputValue(),'');
     assert.equal(await dashboard.getByRole('heading',{name:'Preferences',exact:true}).count(),0);
     await dashboard.getByRole('button',{name:'Add education',exact:true}).click();
     await dashboard.getByLabel('School',{exact:true}).fill('Fixture University');
@@ -605,23 +609,25 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
     metrics.panelSync.reloadMs=performance.now()-syncStart;
     await guidedTarget.close();
 
-    await rpc(dashboard,'secret:registration',{email:registrationEmail});
+    await rpc(dashboard,'secret:registration',{email:registrationEmail,password:registrationPassword});
     const registration=await context.newPage();
     await registration.goto(urls.workday.replace('_R123','_R652')+'?registration=1');
     await registration.bringToFront();
     await panel.getByText('Create an account',{exact:true}).waitFor();
-    const fillEmail=panel.getByRole('button',{name:'Fill registration email',exact:true});
+    const fillEmail=panel.getByRole('button',{name:'Fill sign-up details',exact:true});
     await fillEmail.click();
     await panel.getByLabel('Company',{exact:true}).fill('Fixture Employer');
     await panel.getByRole('button',{name:'Done',exact:true}).click();
     await registration.locator('#registration-email').fill('other@example.invalid');
     await fillEmail.click();
-    await panel.getByText('No empty email field.',{exact:true}).waitFor();
+    await panel.getByText(/registration form has a different email/).waitFor();
+    assert.equal(await registration.locator('#registration-password').inputValue(),'');
     await registration.locator('#registration-email').fill('');
     await fillEmail.click();
-    await panel.getByText('Email filled.',{exact:true}).waitFor();
+    await panel.getByText('3 sign-up fields filled.',{exact:true}).waitFor();
     assert.equal(await registration.locator('#registration-email').inputValue(),registrationEmail);
-    assert.equal(await registration.locator('#registration-password').inputValue(),'');
+    assert.equal(await registration.locator('#registration-password').inputValue(),registrationPassword);
+    assert.equal(await registration.locator('#confirmation-password').inputValue(),registrationPassword);
     assert.equal(await registration.evaluate(()=>window.meshjobSubmits),0);
     await registration.close();
 
