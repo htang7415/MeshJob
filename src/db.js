@@ -21,7 +21,8 @@ export async function settings() {
     if(key==='skills') profile.skills=distinctValues(value);
     else if(key!=='summary'&&structuredValue(value)) profile[key]='';
   }
-  return { ...DEFAULTS, ...saved, preferences, profile, id:'settings' };
+  // 1.1: search time and Workday navigation are fixed, not settings.
+  return { ...DEFAULTS, ...saved, slots:DEFAULTS.slots, preferences, profile, id:'settings' };
 }
 export async function updateSettings(update) {
   return db.transaction('rw', db.settings, async () => {

@@ -21,7 +21,8 @@ const lever='https://jobs.lever.co';
 const workday='https://meshjob-fixture.wd5.myworkdayjobs.com';
 const blueYonder='https://jda.wd5.myworkdayjobs.com';
 const mockBoard='https://boards-api.greenhouse.io';
-const domains=[green,ashby,lever,workday,blueYonder,mockBoard];
+const databricks='https://www.databricks.com';
+const domains=[green,ashby,lever,workday,blueYonder,mockBoard,databricks];
 const slug='meshjob-fixture';
 const id='13e1e478-6330-47c5-9fb0-d07889111cc2';
 const urls={
@@ -29,11 +30,13 @@ const urls={
   lever:lever+'/'+slug+'/'+id+'/apply',workday:workday+'/Careers/job/Remote/Program_Coordinator_R123/apply'
 };
 const defaultConfig={
-  profile:{givenName:'Taylor',familyName:'Example',fullName:'Taylor Example',email:'taylor@example.invalid',city:'Montréal',
+  profile:{givenName:'Taylor',familyName:'Example',fullName:'Taylor Example',preferredName:'Tay',email:'taylor@example.invalid',city:'Montréal',
     country:'Canada',phone:'555-0191',website:'https://example.invalid/sample',skills:['Python','PyTorch','C++'],experience:[{employer:'Example Company',title:'Coordinator',current:true}],
     education:[{school:'Example College',degree:'Bachelors'}]},preferences:{titles:[]},onboarded:true,advance:true
 };
 const testToken='sk-ant-meshjob-fixture-value';
+const registrationEmail='registration@example.invalid';
+const registrationPassword='fixture-registration-only';
 function pdfFixture() {
   const stream='BT /F1 12 Tf 24 100 Td (MeshJob local fixture text) Tj ET';
   const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
@@ -196,7 +199,7 @@ async function measureWarm(dashboard) {
   }));
 }
 
-test('fresh production build runs without host grants, credentials or external account',async()=>{
+test('fresh production build runs with only job-site host grants and no credentials or external account',async()=>{
   const {context,dashboard,id,close}=await contextFor(baseDist,'production-profile');
   dashboard.setDefaultTimeout(6500);
   try {
@@ -206,7 +209,11 @@ test('fresh production build runs without host grants, credentials or external a
     assert.equal(manifest.version,version);assert.equal(manifest.oauth2,undefined);
     const publicKey=await readFile(new URL('../scripts/extension-public-key.txt',import.meta.url),'utf8');
     assert.equal(manifest.key,publicKey.trim());
-    assert.ok((permissions.origins??[]).every(origin=>origin.startsWith('chrome-extension://')),JSON.stringify(permissions));
+    const {ATS_ORIGINS,LIST_ORIGINS}=await import('../src/domain.js');
+    assert.deepEqual((permissions.origins??[]).filter(origin=>!origin.startsWith('chrome-extension://')).sort(),[...ATS_ORIGINS,...LIST_ORIGINS].sort(),JSON.stringify(permissions));
+    await dashboard.getByRole('button',{name:'Set up discovery'}).click();
+    await dashboard.getByRole('checkbox',{name:/Add recommended company boards/}).waitFor();
+    await dashboard.getByRole('button',{name:'Cancel',exact:true}).click();
     await dashboard.getByRole('button',{name:'Skip setup'}).click();
     await dashboard.getByRole('link',{name:'Tracker',exact:true}).click();
     await dashboard.getByRole('heading',{name:'Tracker',exact:true}).waitFor();
@@ -214,20 +221,20 @@ test('fresh production build runs without host grants, credentials or external a
     await dashboard.getByLabel('Company',{exact:true}).fill('Fixture Health');
     await dashboard.getByLabel('Job title',{exact:true}).fill('Clinical Coordinator');
     await dashboard.getByLabel('Notes',{exact:true}).fill('A sandbox application.');
-    await dashboard.getByLabel('Experience level',{exact:true}).selectOption('Entry level');
+    await dashboard.getByLabel('Level',{exact:true}).selectOption('Entry');
     await dashboard.getByLabel('Priority',{exact:true}).selectOption('High');
     await dashboard.getByLabel('Workplace type',{exact:true}).selectOption('Hybrid');
     const date=new Date();
     const localTime=new Date(date.getTime()-date.getTimezoneOffset()*60_000).toISOString().slice(0,16);
     await dashboard.getByLabel('Actual submission date · optional').fill(localTime);
     await dashboard.getByRole('button',{name:'Save',exact:true}).click();
-    await dashboard.getByRole('button',{name:'Clinical Coordinator'}).waitFor();
-    await dashboard.getByRole('columnheader',{name:'Experience level'}).waitFor();
+    await dashboard.getByRole('button',{name:'Clinical Coordinator',exact:true}).waitFor();
+    await dashboard.getByRole('columnheader',{name:'Level'}).waitFor();
+    for(const name of ['Resume','Source']) await dashboard.getByRole('columnheader',{name,exact:true}).waitFor();
     await dashboard.screenshot({path:join(run,'tracker-table.png')});
     await dashboard.getByRole('button',{name:'Status',exact:true}).click();
     await dashboard.locator('.status-group').getByRole('heading',{name:/Applied/}).waitFor();
-    await dashboard.getByRole('button',{name:'Calendar',exact:true}).click();
-    await dashboard.locator('.calendar-grid').getByRole('button',{name:'Open Fixture Health'}).waitFor();
+    assert.equal(await dashboard.getByRole('button',{name:'Calendar',exact:true}).count(),0);
     await dashboard.getByRole('button',{name:'Table',exact:true}).click();
     await dashboard.getByRole('link',{name:'Stats',exact:true}).click();
     await dashboard.getByRole('heading',{name:'Stats',exact:true}).waitFor();
@@ -235,12 +242,26 @@ test('fresh production build runs without host grants, credentials or external a
     assert.equal(await dashboard.getByRole('button',{name:'Month',exact:true}).getAttribute('aria-pressed'),'true');
     assert.equal(await dashboard.locator('.metric strong').first().innerText(),'1');
     await dashboard.screenshot({path:join(run,'stats-month.png')});
+    await dashboard.getByRole('link',{name:'Settings',exact:true}).click();
     await dashboard.getByRole('button',{name:'Search active',exact:false}).click();
     await dashboard.getByLabel('Mode',{exact:true}).selectOption('Paused');
     await dashboard.getByRole('button',{name:'Update',exact:true}).click();
-    await dashboard.getByRole('button',{name:'Search paused',exact:false}).waitFor();
+    await dashboard.getByRole('button',{name:'Search paused',exact:false}).first().waitFor();
     assert.deepEqual(await dashboard.evaluate(()=>chrome.alarms.getAll()),[]);
-    await dashboard.getByRole('link',{name:'Profile',exact:true}).click();
+    await dashboard.getByRole('link',{name:'Discover',exact:true}).click();
+    const postedAt=new Date().toISOString();
+    for(const [id,title,location] of [
+      ['local-engineer','Software Engineer','Toronto, Canada'],
+      ['foreign-engineer','Backend Engineer','Tokyo, Japan'],
+      ['local-diagnostics','Diagnostics Engineer','Toronto, Canada']
+    ]) {
+      const url='https://example.com/jobs/'+id;
+      await putInStore(dashboard,'jobs',{id,title,location,url,urls:[url],keys:[],sourceIds:[],members:{},
+        active:true,official:true,company:'Fixture Employer',postedAt,firstSeenAt:postedAt});
+    }
+    await dashboard.reload();
+    await dashboard.getByRole('button',{name:'Diagnostics Engineer',exact:true}).waitFor();
+    await dashboard.getByRole('button',{name:'Preferences',exact:true}).click();
     const titles=dashboard.getByRole('textbox',{name:'Target job titles'});
     await titles.fill('Software Engineer');await titles.press('Enter');
     await titles.fill('Data Analyst');await titles.press('Enter');
@@ -248,13 +269,40 @@ test('fresh production build runs without host grants, credentials or external a
     assert.equal(await titles.inputValue(),'');
     await dashboard.getByRole('combobox',{name:'Choose countries',exact:true}).selectOption('Canada');
     await dashboard.getByRole('combobox',{name:'Choose regions or cities',exact:true}).selectOption('Ontario');
-    await dashboard.getByRole('combobox',{name:'Choose experience level'}).selectOption('Entry level');
+    await dashboard.getByRole('combobox',{name:'Choose level'}).selectOption('Entry');
     await dashboard.getByRole('button',{name:'Save preferences'}).click();
+    await dashboard.getByRole('dialog',{name:'Preferences'}).waitFor({state:'hidden'});
+    await dashboard.getByRole('button',{name:'Diagnostics Engineer',exact:true}).waitFor({state:'hidden'});
+    assert.equal(await dashboard.getByRole('button',{name:'Backend Engineer',exact:true}).count(),0);
+    await dashboard.getByRole('button',{name:'Software Engineer',exact:true}).waitFor();
+    await dashboard.getByRole('button',{name:'Preferences',exact:true}).click();
     await dashboard.getByRole('button',{name:'Remove Software Engineer'}).waitFor();
     await dashboard.getByRole('button',{name:'Remove Data Analyst'}).waitFor();
     await dashboard.getByRole('button',{name:'Remove Ontario'}).waitFor();
     assert.equal(await dashboard.getByText('Advanced preferences',{exact:true}).count(),0);
-    await dashboard.screenshot({path:join(run,'profile-preferences.png')});
+    await dashboard.screenshot({path:join(run,'discover-preferences.png')});
+    await dashboard.getByRole('button',{name:'Cancel',exact:true}).click();
+    await dashboard.getByRole('link',{name:'Settings',exact:true}).click();
+    await dashboard.getByRole('heading',{name:'Registration',exact:true}).waitFor();
+    for(const label of ['Model','Monthly budget in USD']) assert.equal(await dashboard.getByLabel(label,{exact:true}).count(),1);
+    for(const removed of ['Rounds per day','Web searches per round','Daily budget · USD','Recovery window in days'])
+      assert.equal(await dashboard.getByText(removed,{exact:true}).count(),0,removed);
+    const registrationField=dashboard.getByLabel('Registration email',{exact:true});
+    await registrationField.fill(registrationEmail);await registrationField.press('Tab');
+    await until(async()=>(await rpc(dashboard,'integrations:status')).registrationEmail===registrationEmail);
+    const passwordField=dashboard.getByLabel('Registration password',{exact:true});
+    await passwordField.fill(registrationPassword);await passwordField.press('Tab');
+    await until(async()=>(await rpc(dashboard,'integrations:status')).registrationPassword===true);
+    assert.equal(await passwordField.inputValue(),'');
+    assert.equal(await dashboard.getByRole('heading',{name:'Preferences',exact:true}).count(),0);
+    await dashboard.getByRole('button',{name:'Add education',exact:true}).click();
+    await dashboard.getByLabel('School',{exact:true}).fill('Fixture University');
+    await dashboard.getByLabel('Start month',{exact:true}).fill('2024-09');
+    await dashboard.getByLabel('End month',{exact:true}).fill('2026-09');
+    await dashboard.getByRole('checkbox',{name:'I currently study here'}).check();
+    assert.equal(await dashboard.getByLabel('End month',{exact:true}).isVisible(),false);
+    await dashboard.getByRole('button',{name:'Save',exact:true}).click();
+    await dashboard.getByText('2024-09 — Present',{exact:true}).waitFor();
     await dashboard.getByRole('button',{name:'Add experience',exact:true}).click();
     await dashboard.getByLabel('Employer',{exact:true}).fill('Sandbox Employer');
     await dashboard.getByRole('checkbox',{name:'I currently work in this role'}).check();
@@ -268,29 +316,30 @@ test('fresh production build runs without host grants, credentials or external a
     assert.equal(await dashboard.getByRole('button',{name:/^Set answer: /}).count(),14);
     await dashboard.getByRole('button',{name:'Set answer: Are you a citizen of the United States?'}).click();
     assert.equal(await dashboard.getByLabel('Answer',{exact:true}).inputValue(),'');
-    await dashboard.getByLabel('Answer',{exact:true}).fill('Prefer not to answer');
-    await dashboard.getByRole('checkbox',{name:'I verified this answer for the question shown.'}).check();
+    await dashboard.getByRole('combobox',{name:'Answer',exact:true}).selectOption('No');
+    assert.equal(await dashboard.getByRole('dialog').getByRole('checkbox').count(),0);
     await dashboard.getByRole('button',{name:'Save',exact:true}).click();
     await dashboard.getByRole('button',{name:'Edit answer: Are you a citizen of the United States?'}).waitFor();
     await dashboard.getByRole('heading',{name:'Cover letters',exact:true}).waitFor();
     await dashboard.getByRole('button',{name:'Add resume',exact:true}).click();
     await dashboard.getByLabel('PDF file',{exact:true}).setInputFiles({name:'fixture-material.pdf',mimeType:'application/pdf',buffer:pdfFixture()});
     await dashboard.getByRole('button',{name:'Save',exact:true}).click();
-    await dashboard.getByText(/fixture-material.pdf · revision 1/).waitFor({timeout:25000});
-    await dashboard.getByRole('button',{name:'Edit',exact:true}).last().click();
+    await dashboard.getByText('fixture-material.pdf · v1',{exact:true}).waitFor({timeout:25000});
+    await dashboard.getByRole('button',{name:'Edit fixture-material.pdf',exact:true}).click();
     await dashboard.getByText('Review or supply extracted text',{exact:true}).click();
     assert.match(await dashboard.getByLabel('Material text').inputValue(),/MeshJob local fixture text/);
     await dashboard.getByRole('button',{name:'Cancel',exact:true}).click();
-    await dashboard.getByRole('button',{name:'Search paused',exact:false}).click();
+    await dashboard.getByRole('button',{name:'Search paused',exact:false}).first().click();
     await dashboard.getByLabel('Mode',{exact:true}).selectOption('Finished');
     await dashboard.getByRole('button',{name:'Update',exact:true}).click();
     await dashboard.getByLabel('I want to stop scheduled services.').check();
     await dashboard.getByRole('button',{name:'Finish search',exact:true}).click();
-    await dashboard.getByRole('button',{name:'Search finished',exact:false}).waitFor();
+    await dashboard.getByRole('button',{name:'Search finished',exact:false}).first().waitFor();
     assert.deepEqual(await dashboard.evaluate(()=>chrome.alarms.getAll()),[]);
     await context.setOffline(true);
     await dashboard.getByRole('link',{name:'Tracker',exact:true}).click();
-    await dashboard.getByRole('button',{name:'Clinical Coordinator'}).waitFor();
+    await dashboard.getByRole('button',{name:'Clinical Coordinator',exact:true}).waitFor();
+    await dashboard.locator('details.menu summary').first().click();
     await dashboard.getByRole('button',{name:'Export',exact:true}).click();
     const [download]=await Promise.all([dashboard.waitForEvent('download'),dashboard.getByRole('button',{name:'All applications CSV'}).click()]);
     assert.equal(download.suggestedFilename(),'meshjob-applications.csv');
@@ -299,11 +348,18 @@ test('fresh production build runs without host grants, credentials or external a
     await backup.saveAs(path);
     const {unzipSync}=await import('fflate');
     const files=unzipSync(new Uint8Array(await readFile(path)));
-    const data=JSON.parse(Buffer.from(files['records.json']).toString());
+    const records=Buffer.from(files['records.json']).toString();
+    assert.ok(!records.includes(registrationEmail)&&!records.includes(registrationPassword));
+    const data=JSON.parse(records);
     assert.equal(data.materials.length,1);assert.match(data.materials[0].text,/MeshJob local fixture text/);
     assert.deepEqual(data.settings.preferences.titles,['Software Engineer','Data Analyst']);
     assert.deepEqual(data.settings.preferences.countries,['Canada']);
     assert.deepEqual(data.settings.profile.skills,['Python','PyTorch','C++']);
+    assert.equal(data.settings.profile.education[0].start,'2024-09');
+    assert.equal(data.settings.profile.education[0].current,true);
+    assert.equal(data.settings.profile.education[0].end,undefined);
+    assert.equal(data.answers[0].value,'No');
+    assert.equal(data.answers[0].verified,true);
     assert.equal(data.settings.profile.experience[0].current,true);
     assert.equal(data.settings.profile.experience[0].end,undefined);
     assert.deepEqual(Buffer.from(files['pdf/'+data.materials[0].hash+'.pdf']),pdfFixture());
@@ -313,8 +369,24 @@ test('fresh production build runs without host grants, credentials or external a
     await session.detach();
     const reloaded=await context.newPage();
     await reloaded.goto('chrome-extension://'+id+'/dashboard.html#tracker');
-    await reloaded.getByRole('button',{name:'Search finished',exact:false}).waitFor();
-    await reloaded.getByRole('button',{name:'Clinical Coordinator'}).waitFor();
+    await reloaded.getByRole('button',{name:'Search finished',exact:false}).first().waitFor();
+    await reloaded.getByRole('button',{name:'Clinical Coordinator',exact:true}).waitFor();
+    const edit=reloaded.getByRole('button',{name:'Edit Clinical Coordinator',exact:true});
+    await edit.click();
+    const editor=reloaded.getByRole('dialog',{name:'Edit application'});
+    await editor.getByLabel('Current stage').selectOption('Interview');
+    await editor.getByLabel('Actual submission date · optional').fill('2026-11-23T10:00');
+    await editor.getByRole('button',{name:'Save',exact:true}).click();
+    await reloaded.getByRole('row').filter({hasText:'Clinical Coordinator'}).getByText('Interview',{exact:true}).waitFor();
+    await edit.click();
+    assert.equal(await editor.getByLabel('Actual submission date · optional').inputValue(),'2026-11-23T10:00');
+    await editor.getByRole('button',{name:'Delete application',exact:true}).click();
+    const confirmation=reloaded.getByRole('dialog',{name:'Delete application'});
+    await confirmation.getByRole('button',{name:'Cancel',exact:true}).click();
+    await edit.click();
+    await editor.getByRole('button',{name:'Delete application',exact:true}).click();
+    await confirmation.getByRole('button',{name:'Delete application',exact:true}).click();
+    await edit.waitFor({state:'hidden'});
   } finally {await close();}
 });
 
@@ -323,6 +395,8 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
   await cp(baseDist,dir,{recursive:true});
   const manifestPath=join(dir,'manifest.json'), manifest=JSON.parse(await readFile(manifestPath,'utf8'));
   // Test extension only: preauthorize the intercepted hosts. The production test checks the real permission defaults.
+  manifest.permissions.push('webNavigation');
+  manifest.optional_permissions=manifest.optional_permissions.filter(permission=>permission!=='webNavigation');
   manifest.host_permissions=domains.map(origin=>origin+'/*').concat('https://api.anthropic.com/*');
   await writeFile(manifestPath,JSON.stringify(manifest));
   const {context,dashboard,id,close}=await contextFor(dir,'fixture-profile');
@@ -330,10 +404,33 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
   const metrics={forms:[],workday:[],warm:[],cold:[],panelSync:{},sandboxRequests:0,externalApplicationRequests:0};
   let hits=0;
   try {
+    await context.route('https://www.recaptcha.net/recaptcha/**',route=>route.fulfill({contentType:'text/html',body:'<title>Verification fixture</title>'}));
     await context.route(new RegExp(domains.map(origin=>origin.replaceAll('.','\\.')).join('|')),async route=>{
       const value=new URL(route.request().url());
       if(route.request().method()!=='GET'){metrics.externalApplicationRequests++;await route.abort();return;}
       if(value.origin===mockBoard){hits++;await route.fulfill({json:{jobs:[]}});return;}
+      if(value.origin===databricks) {
+        const embedded=green+'/embed/job_app?for=databricks&token=8546367002&validityToken=fixture';
+        await route.fulfill({contentType:'text/html',body:`<!doctype html><title>AI Engineer - Databricks</title>
+          <main><h1>AI Engineer</h1><div>United States<p><button id="apply" type="button">Apply now</button></p></div>
+          <div class="rich-text-body"><p><strong>AI Engineer</strong></p><p><strong>CSQ327R177</strong></p><p>Build engineering tools.</p></div>
+          <form role="search"><label>Site search <input id="site-search" type="search"></label></form><div id="embed"></div></main>
+          <script>document.getElementById('apply').onclick=()=>document.getElementById('embed').innerHTML=
+            '<iframe title="Greenhouse Job Board" src="${embedded}"></iframe>';</script>`});
+        return;
+      }
+      if(value.origin===green&&value.pathname==='/embed/job_app') {
+        await route.fulfill({contentType:'text/html',body:`<!doctype html><h1>Apply for this job</h1>
+          <form id="application" onsubmit="window.meshjobSubmits++;return false">
+            <label>First Name <input id="first" required></label>
+            <label>Preferred First Name <input id="preferred" required></label>
+            <button type="button" id="more">Show more</button><button type="submit">Submit application</button>
+          </form><div class="grecaptcha-badge"><iframe title="reCAPTCHA" src="https://www.recaptcha.net/recaptcha/enterprise/anchor?size=invisible"></iframe></div>
+          <script>window.meshjobSubmits=0;document.getElementById('more').onclick=()=>{
+            document.getElementById('more').insertAdjacentHTML('beforebegin','<label>Email <input id="email" type="email" required></label>');
+          };</script>`});
+        return;
+      }
       if(value.origin===blueYonder) {
         await route.fulfill({status:200,contentType:'text/html',body:`<!doctype html><title>Job listing - Logo</title>
           <a data-automation-id="logoLink"><img alt="Logo search for jobs"></a>
@@ -342,20 +439,29 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
           <div data-automation-id="jobPostingDescription"><p>Design APIs and verify releases.</p><div>Unrelated overlay</div></div>`});
         return;
       }
+      if(value.origin===workday&&value.searchParams.has('registration')) {
+        await route.fulfill({contentType:'text/html',body:`<!doctype html><main><h1 data-automation-id="jobPostingHeader">Fixture role</h1>
+          <h2 data-automation-id="pageHeaderTitle">Create Account</h2><form onsubmit="window.meshjobSubmits++;return false">
+          <label>Email Address <input id="registration-email" type="email" required></label>
+          <label>Password <input id="registration-password" type="password" autocomplete="new-password" required></label>
+          <label>Confirm Password <input id="confirmation-password" type="password" autocomplete="new-password" required></label>
+          <button type="submit">Create account</button></form></main><script>window.meshjobSubmits=0;</script>`});
+        return;
+      }
       const provider=Object.keys(urls).find(key=>urls[key].startsWith(value.origin));
       const variant=Number(value.searchParams.get('variant')??0);
       metrics.sandboxRequests++;
       await route.fulfill({status:200,contentType:'text/html',body:value.searchParams.has('multi')?workdayFixture():fixture(provider,variant)});
     });
     await rpc(dashboard,'settings:update',{config:defaultConfig});
-    const discovered={keys:[],urls:[],sourceIds:[],members:{},active:true,official:false,company:'Media Inc',location:'Remote'};
+    const discovered={keys:[],urls:[],sourceIds:[],members:{},active:true,official:false,company:'Media Inc',location:'Remote',lastAbsentAt:new Date(Date.now()-300_000).toISOString()};
     await putInStore(dashboard,'jobs',{...discovered,id:'sort-high',title:'High match role',match:{score:95},firstSeenAt:new Date(Date.now()-60_000).toISOString()});
     await putInStore(dashboard,'jobs',{...discovered,id:'sort-new',title:'New role',firstSeenAt:new Date().toISOString()});
     await dashboard.reload();
     await dashboard.getByRole('button',{name:'New role',exact:true}).waitFor();
-    assert.equal(await dashboard.locator('.job-row h2').first().innerText(),'New role');
+    assert.equal(await dashboard.locator('.job-row .job-title').first().innerText(),'New role');
     await dashboard.getByRole('combobox',{name:'Sort by',exact:true}).selectOption('match');
-    assert.equal(await dashboard.locator('.job-row h2').first().innerText(),'High match role');
+    assert.equal(await dashboard.locator('.job-row .job-title').first().innerText(),'High match role');
     assert.equal(await dashboard.getByLabel('Employment type',{exact:true}).count(),0);
     await dashboard.getByRole('combobox',{name:'Sort by',exact:true}).selectOption('recent');
 
@@ -419,13 +525,14 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
         await rpc(dashboard,'form:fill',{...ref,plan});
         assert.deepEqual(await tab.locator('[data-selected-skill]').allTextContents(),['Python','PyTorch','C++']);
       }
-      step=await rpc(dashboard,'form:advance',ref);
-      assert.equal(step.step,expect);metrics.workday.push(expect);
+      await tab.locator('[data-automation-id=bottom-navigation-next-button]').click();
+      step=await until(async()=>{const next=await rpc(dashboard,'form:inspect',{tabId:ref.tabId});return next.step===expect&&next;});
+      metrics.workday.push(expect);
       ref.inspection=await rpc(dashboard,'form:inspect',{tabId:ref.tabId});
       ref.revision=ref.inspection.revision;
     }
-    const noAdvance=await dashboard.evaluate(ref=>chrome.runtime.sendMessage({type:'form:advance',...ref}),ref);
-    assert.equal(noAdvance.ok,false);
+    const noAdvance=await dashboard.evaluate(ref=>chrome.runtime.sendMessage({type:'form:advance',...ref}).catch(()=>undefined),ref);
+    assert.ok(!noAdvance?.ok,'automatic Workday advance is removed');
     assert.equal(await tab.evaluate(()=>window.meshjobSubmits),0);
     await tab.close();
 
@@ -434,36 +541,52 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
     const panelTarget=await context.newPage();
     await panelTarget.goto(urls.greenhouse.replace('111','390')+'?variant=0');
     await panelTarget.bringToFront();
-    await panel.getByRole('button',{name:'Prepare application'}).waitFor({timeout:7000});
-    await panel.getByRole('button',{name:'Prepare application'}).click();
-    await panel.getByRole('button',{name:'Save draft'}).click();
-    await panel.getByRole('button',{name:'Fill available fields'}).click();
-    await panel.getByRole('heading',{name:'Review autofill'}).waitFor();
-    assert.equal(await panelTarget.locator('#email').inputValue(),defaultConfig.profile.email);
+    const autofill=panel.getByRole('button',{name:/^(Autofill|Fill this page)$/});
+    await autofill.waitFor({timeout:7000});
+    assert.equal(await panel.getByRole('button',{name:'Prepare application'}).count(),0);
+    await autofill.click();
+    await panel.getByRole('heading',{name:'Needs you'}).waitFor();
+    await until(async()=>await panelTarget.locator('#email').inputValue()===defaultConfig.profile.email);
+    await panel.getByText('Preparing',{exact:true}).waitFor();
+    assert.equal(await panel.getByLabel('Source',{exact:true}).inputValue(),'Company site');
+    await panel.getByRole('button',{name:/Are you authorized to work\?/}).click();
+    await until(()=>panelTarget.evaluate(()=>document.activeElement?.name==='authorization'));
     assert.equal(await panelTarget.evaluate(()=>window.meshjobSubmits),0);
     await panel.setViewportSize({width:420,height:780});
     await panel.screenshot({path:join(run,'panel-review.png')});
+    await panelTarget.getByText('Yes',{exact:true}).first().click();
+    await panelTarget.getByText('Yes',{exact:true}).last().click();
+    await panelTarget.getByRole('button',{name:'Submit application'}).click();
+    await panel.getByText(/^Applied · /).waitFor();
+    await panel.getByRole('heading',{name:/^Save 2 answers/}).waitFor();
+    await panel.getByRole('checkbox',{name:/Are you authorized to work\?/}).check();
+    await panel.getByRole('button',{name:'Save',exact:true}).click();
+    await until(()=>dashboard.evaluate(()=>new Promise(resolve=>{const r=indexedDB.open('meshjob');r.onsuccess=()=>{const q=r.result.transaction('answers').objectStore('answers').count();q.onsuccess=()=>{r.result.close();resolve(q.result===1);};};})));
     await panelTarget.close();
     const guidedTarget=await context.newPage();
     await guidedTarget.goto(urls.workday.replace('_R123','_R650')+'?multi=1');
     await guidedTarget.bringToFront();
-    await panel.getByRole('button',{name:'Prepare application'}).click();
+    await panel.getByText(/^My Information · /).waitFor();
+    await autofill.click();
     const employer=panel.getByLabel('Company',{exact:true});
     assert.equal(await employer.inputValue(),'');
     await employer.fill('Sandbox Employer');
-    await panel.getByRole('button',{name:'Save draft'}).click();
-    await panel.getByRole('button',{name:'Fill to review'}).click();
+    await panel.getByRole('button',{name:'Done',exact:true}).click();
+    for(const [next,filled] of [['My Experience','#email'],['Application Questions','#employer1'],['Review','#phone']]) {
+      await autofill.click();
+      await until(async()=>!!await guidedTarget.locator(filled).inputValue());
+      await guidedTarget.locator('[data-automation-id=bottom-navigation-next-button]').click();
+      if(next!=='Review') await panel.getByText(new RegExp('^'+next)).waitFor();
+    }
     await guidedTarget.locator('#final').waitFor();
     assert.equal(await guidedTarget.evaluate(()=>window.meshjobSubmits),0);
     metrics.guidedReachedReview=true;
-    await panel.getByText('Review',{exact:true}).waitFor();
     let syncStart=performance.now();
     await guidedTarget.evaluate(()=>{setTimeout(()=>{
       document.querySelector('h2').textContent='Additional Questions';
       document.querySelector('#fields').innerHTML='<label>Portfolio <input required></label>';
     },300);});
-    await panel.getByText('Additional Questions',{exact:true}).waitFor({timeout:3000});
-    await panel.getByText('1 required open',{exact:true}).waitFor({timeout:3000});
+    await panel.getByText(/^Additional Questions · .*1 required to fill$/).waitFor({timeout:3000});
     metrics.panelSync.delayedFormMs=performance.now()-syncStart;
     const originalUrl=guidedTarget.url();
     syncStart=performance.now();
@@ -474,20 +597,40 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
       heading.textContent='Platform Engineer';
     });
     await panel.getByRole('heading',{name:'Platform Engineer'}).waitFor({timeout:3000});
-    await panel.getByRole('button',{name:'Prepare application'}).waitFor();
-    assert.equal(await panel.getByRole('button',{name:'Fill available fields'}).count(),0);
     metrics.panelSync.sameTabRouteMs=performance.now()-syncStart;
     syncStart=performance.now();
     await guidedTarget.goBack();
     assert.equal(guidedTarget.url(),originalUrl);
     await panel.getByRole('heading',{name:'Program Coordinator'}).waitFor({timeout:3000});
-    await panel.getByRole('button',{name:'Fill available fields'}).waitFor();
+    await panel.getByRole('button',{name:'Fill this page'}).waitFor();
     metrics.panelSync.backMs=performance.now()-syncStart;
     syncStart=performance.now();
     await guidedTarget.reload();
-    await panel.getByText('My Information',{exact:true}).waitFor({timeout:3000});
+    await panel.getByText(/^My Information · /).waitFor({timeout:3000});
     metrics.panelSync.reloadMs=performance.now()-syncStart;
     await guidedTarget.close();
+
+    await rpc(dashboard,'secret:registration',{email:registrationEmail,password:registrationPassword});
+    const registration=await context.newPage();
+    await registration.goto(urls.workday.replace('_R123','_R652')+'?registration=1');
+    await registration.bringToFront();
+    await panel.getByText('Create an account',{exact:true}).waitFor();
+    const fillEmail=panel.getByRole('button',{name:'Fill sign-up details',exact:true});
+    await fillEmail.click();
+    await panel.getByLabel('Company',{exact:true}).fill('Fixture Employer');
+    await panel.getByRole('button',{name:'Done',exact:true}).click();
+    await registration.locator('#registration-email').fill('other@example.invalid');
+    await fillEmail.click();
+    await panel.getByText(/registration form has a different email/).waitFor();
+    assert.equal(await registration.locator('#registration-password').inputValue(),'');
+    await registration.locator('#registration-email').fill('');
+    await fillEmail.click();
+    await panel.getByText('3 sign-up fields filled.',{exact:true}).waitFor();
+    assert.equal(await registration.locator('#registration-email').inputValue(),registrationEmail);
+    assert.equal(await registration.locator('#registration-password').inputValue(),registrationPassword);
+    assert.equal(await registration.locator('#confirmation-password').inputValue(),registrationPassword);
+    assert.equal(await registration.evaluate(()=>window.meshjobSubmits),0);
+    await registration.close();
 
     const listing=await context.newPage();
     await listing.goto(blueYonder+'/JDA_Careers/job/Dallas/Backend-Engineer_263328-1');
@@ -495,21 +638,45 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
     await listing.bringToFront();
     await panel.getByText('Blue Yonder',{exact:true}).waitFor();
     metrics.panelSync.tabSwitchMs=performance.now()-syncStart;
-    await panel.getByRole('button',{name:'Prepare application'}).click();
-    assert.equal(await panel.getByLabel('Company',{exact:true}).inputValue(),'Blue Yonder');
-    assert.equal(await panel.getByLabel('Requisition ID').inputValue(),'263328');
-    await panel.getByText(/Job description detected/).waitFor();
-    await panel.getByRole('button',{name:'Save draft'}).click();
-    await panel.getByText('Preparing draft saved.',{exact:true}).waitFor();
+    await panel.getByRole('button',{name:'Save to Tracker'}).click();
+    await panel.getByRole('button',{name:'Open in Dashboard'}).waitFor();
     assert.equal(await listing.url(),blueYonder+'/JDA_Careers/job/Dallas/Backend-Engineer_263328-1');
+    const custom=await context.newPage();
+    await custom.goto(databricks+'/company/careers/engineering/ai-engineer-8546367002');
+    await custom.bringToFront();
+    await panel.getByRole('heading',{name:'AI Engineer',exact:true}).waitFor();
+    await panel.getByText('Databricks',{exact:true}).waitFor();
+    await custom.getByRole('button',{name:'Apply now'}).click();
+    const embed=custom.frameLocator('iframe[title="Greenhouse Job Board"]');
+    await panel.getByText(/2 required to fill$/).waitFor();
+    await embed.getByRole('button',{name:'Show more'}).click();
+    await panel.getByText(/3 required to fill$/).waitFor();
+    assert.equal(await autofill.isEnabled(),true);
+    assert.equal(await panel.getByText('Verification required',{exact:true}).count(),0);
+    await embed.locator('body').evaluate(body=>body.insertAdjacentHTML('beforeend',
+      '<div id="active-verification" data-captcha-challenge>Complete the verification</div>'));
+    await panel.getByText('Verification required',{exact:true}).waitFor();
+    assert.equal(await autofill.isDisabled(),true);
+    await embed.locator('#active-verification').evaluate(node=>node.remove());
+    await panel.getByText('Verification required',{exact:true}).waitFor({state:'hidden'});
+    await autofill.click();
+    await panel.getByText('Preparing',{exact:true}).waitFor();
+    await panel.getByText('3 filled',{exact:true}).waitFor();
+    assert.equal(await embed.locator('#first').inputValue(),'Taylor');
+    assert.equal(await embed.locator('#preferred').inputValue(),'Tay');
+    assert.equal(await embed.locator('#email').inputValue(),defaultConfig.profile.email);
+    assert.equal(await custom.locator('#site-search').inputValue(),'');
+    assert.equal(await embed.locator('body').evaluate(()=>window.meshjobSubmits),0);
+    await custom.locator('iframe').evaluate(frame=>{const next=new URL(frame.src);next.searchParams.set('revision','2');frame.src=next.href;});
+    await panel.getByText(/2 required to fill$/).waitFor();
+    await custom.close();
     const ungranted='https://new-employer.example/jobs/first';
     await context.route(ungranted,route=>route.fulfill({contentType:'text/html',body:'<h1>Job on an ungranted site</h1>'}));
     const otherSite=await context.newPage();
     await otherSite.goto(ungranted,{timeout:7000});
     await otherSite.bringToFront();
-    await panel.getByRole('heading',{name:'Connect this tab'}).waitFor({timeout:3000});
-    await panel.getByText(/click the MeshJob toolbar icon/).waitFor();
-    assert.equal(await panel.getByRole('button',{name:'Prepare application'}).count(),0);
+    await panel.getByText(/click the MeshJob toolbar icon/i).waitFor({timeout:3000});
+    assert.equal(await autofill.count(),0);
     await listing.bringToFront();
     await panel.getByText('Blue Yonder',{exact:true}).waitFor({timeout:3000});
     await otherSite.close();
@@ -522,7 +689,7 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
 
     await rpc(dashboard,'secret:claude',{key:testToken});
     const zipBytes=await dashboard.evaluate(async ()=>{
-      document.querySelector('nav a[href="#profile"]').click();
+      document.querySelector('nav a[href="#settings"]').click();
       return chrome.storage.local.get('claudeKey').then(result=>result.claudeKey.length);
     });
     assert.equal(zipBytes,testToken.length);
@@ -567,13 +734,15 @@ test('ATS sandbox variants, human-only receipt, Workday progression and warm das
     await dashboard.setViewportSize({width:480,height:780});
     await dashboard.screenshot({path:join(run,'dashboard-narrow.png')});
     assert.ok(await dashboard.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
-    const narrowFilters=dashboard.getByRole('button',{name:'Filters',exact:true});
-    assert.equal(await narrowFilters.getAttribute('aria-expanded'),'false');
-    await narrowFilters.click();
-    assert.equal(await narrowFilters.getAttribute('aria-expanded'),'true');
-    await narrowFilters.click();
-    await dashboard.keyboard.press('Tab');
-    assert.ok(await dashboard.evaluate(()=>document.activeElement?.matches('a,button,input,select')));
+    const preferences=dashboard.getByRole('button',{name:'Preferences',exact:true});
+    const dialog=dashboard.getByRole('dialog',{name:'Preferences'});
+    await preferences.click();
+    await dialog.waitFor();
+    await dashboard.screenshot({path:join(run,'discover-preferences-narrow.png')});
+    assert.ok(await dialog.locator('.dialog-body').evaluate(body=>body.scrollWidth<=body.clientWidth));
+    await dashboard.keyboard.press('Escape');
+    await dialog.waitFor({state:'hidden'});
+    assert.ok(await preferences.evaluate(button=>document.activeElement===button));
     assert.equal(metrics.externalApplicationRequests,0);
     assert.equal(hits,0);
     assert.deepEqual(allErrors,[]);

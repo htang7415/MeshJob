@@ -1,6 +1,20 @@
-import regions from './regions.json';
+import regions from './regions.json' with {type:'json'};
 
-export const EXPERIENCE_LEVELS=['Internship','Entry level','Associate','Mid-Senior level','Director','Executive'];
+export const LEVELS=['Intern','Entry','Mid','Senior','Staff+','Manager'];
+export const EXPERIENCE_LEVELS=LEVELS;
+const LEGACY_LEVELS={internship:['Intern'],'entry level':['Entry'],associate:['Entry'],'mid senior level':['Mid','Senior','Staff+'],
+  director:['Manager'],executive:['Manager'],junior:['Entry'],'new grad':['Entry'],'early career':['Entry'],'mid level':['Mid'],
+  staff:['Staff+'],principal:['Staff+'],lead:['Senior'],senior:['Senior']};
+const key=value=>String(value??'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}+]+/gu,' ').trim();
+export function normalizeLevels(values) {
+  const out=new Set();
+  for(const value of [values??[]].flat()) {
+    const direct=LEVELS.find(level=>key(level)===key(value));
+    if(direct) out.add(direct);
+    else for(const level of LEGACY_LEVELS[key(value)]??[]) out.add(level);
+  }
+  return LEVELS.filter(level=>out.has(level));
+}
 export const EMPLOYMENT_TYPES=['Full-time','Part-time','Contract','Temporary','Internship','Volunteer','Other'];
 export const WORKPLACE_TYPES=['On-site','Hybrid','Remote'];
 export const PRIORITIES=['High','Medium','Low'];

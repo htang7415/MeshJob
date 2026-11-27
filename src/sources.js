@@ -1,9 +1,9 @@
 import { parseDocument, DomUtils } from 'htmlparser2';
-import { canonicalUrl, publicUrl, hasJobPath, exactDate, JOB_DESCRIPTION_LIMIT, trim, workdayEmployer } from './domain.js';
+import { canonicalUrl, publicUrl, hasJobPath, exactDate, earliest, JOB_DESCRIPTION_LIMIT, levelOf, trim, workdayEmployer } from './domain.js';
 
 const { findAll, findOne, textContent } = DomUtils;
 const pathToken = /^[\w.-]{1,100}$/;
-export const PROVIDERS = ['greenhouse','ashby','lever','workday','rss','careers','github'];
+export const PROVIDERS = ['greenhouse','ashby','lever','workday','smartrecruiters','workable','rss','careers','github','hn'];
 const JOB_AGGREGATORS=new Set(['weworkremotely.com','remotive.com','jobicy.com','himalayas.app','indeed.com','glassdoor.com','ziprecruiter.com']);
 const employment = { FullTime:'Full-time', PartTime:'Part-time', Intern:'Internship', Contract:'Contract', Temporary:'Temporary', FULL_TIME:'Full-time', PART_TIME:'Part-time', CONTRACTOR:'Contract', INTERN:'Internship' };
 const period = value => String(value??'').toLowerCase().replace(/^per[- ]/,'').replace(/^(?:annual|annually|yearly)$/,'year').replace(/^(hour|week|month)ly$/,'$1');
@@ -34,7 +34,7 @@ export function plain(html) {
 
 export function detectSource(value, hint = '') {
   const raw = trim(value);
-  const url = raw.length<=460 ? publicUrl(raw) : null;
+  const url = raw.length<=460 ? (/^https:\/\/news\.ycombinator\.com\/whoishiring\/?$/.test(raw) ? new URL(raw) : publicUrl(raw)) : null;
   if (!url) throw new Error('Enter a supported public HTTPS URL.');
   const {hostname,origin} = url;
   const parts = url.pathname.split('/').filter(Boolean);
@@ -53,12 +53,21 @@ export function detectSource(value, hint = '') {
     provider = 'workday'; tenant = hostname.split('.')[0];
     site = /^[a-z]{2}-[A-Z]{2}$/.test(parts[0]) ? parts[1] : parts[0];
     endpoint = origin + '/wday/cxs/' + tenant + '/' + site + '/jobs';
+  } else if (['jobs.smartrecruiters.com','careers.smartrecruiters.com','api.smartrecruiters.com'].includes(hostname)) {
+    provider = 'smartrecruiters'; tenant = hostname === 'api.smartrecruiters.com' ? parts[2] : parts[0];
+    endpoint = 'https://api.smartrecruiters.com/v1/companies/' + tenant + '/postings';
+  } else if (hostname === 'apply.workable.com') {
+    provider = 'workable'; tenant = parts[0] === 'api' ? parts[3] : parts[0];
+    endpoint = 'https://apply.workable.com/api/v3/accounts/' + tenant + '/jobs';
+  } else if (hostname === 'hn.algolia.com' || hostname === 'news.ycombinator.com' && parts[0] === 'whoishiring') {
+    provider = 'hn'; tenant = 'whoishiring';
+    endpoint = 'https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=6';
   } else if (hostname === 'github.com' || hostname === 'raw.githubusercontent.com') {
     if (parts.length < 2 || !parts.slice(0,2).every(part => pathToken.test(part))) throw new Error('Enter a GitHub repository or Markdown file.');
     provider = 'github'; tenant = parts.slice(0,2).join('/');
     const branch = hostname.startsWith('raw.') ? parts[2] : parts[2] === 'blob' ? parts[3] : 'HEAD';
     const file = (hostname.startsWith('raw.') ? parts.slice(3) : parts.slice(4)).join('/') || 'README.md';
-    if (!branch || !pathToken.test(branch) || !/^[\w./% -]+\.md$/i.test(file) || file.split('/').includes('..')) throw new Error('Select a Markdown list on a branch without slash characters.');
+    if (!branch || !pathToken.test(branch) || !/^[\w./% -]+\.(?:md|json)$/i.test(file) || file.split('/').includes('..')) throw new Error('Select a Markdown or JSON job list on a branch without slash characters.');
     site = branch + '/' + file;
     endpoint = 'https://raw.githubusercontent.com/' + tenant + '/' + site;
   } else {
@@ -66,7 +75,7 @@ export function detectSource(value, hint = '') {
     tenant = canonicalUrl(url.href);
     endpoint = tenant;
   }
-  if (!tenant || (['greenhouse','ashby','lever','workday'].includes(provider) && !pathToken.test(tenant)) || (provider === 'workday' && !pathToken.test(site))) throw new Error('Could not identify the board. Paste its public Careers URL.');
+  if (!tenant || (['greenhouse','ashby','lever','workday','smartrecruiters','workable'].includes(provider) && !pathToken.test(tenant)) || (provider === 'workday' && !pathToken.test(site))) throw new Error('Could not identify the board. Paste its public Careers URL.');
   const id = [provider, tenant, site ?? ''].join(':').toLowerCase();
   return { id, url:canonicalUrl(url.href), provider, tenant, site, endpoint, name:workdayEmployer(hostname)||tenant,
     interval:10, enabled:true, origin:new URL(endpoint).origin };
@@ -86,6 +95,10 @@ export function postingIdentity(value) {
       if (['ashby','lever'].includes(source.provider) && !/^[a-f\d-]{32,36}$/i.test(id ?? '')) return null;
     } else if (source.provider === 'workday') {
       id = workdayId(url.pathname);
+    } else if (source.provider === 'smartrecruiters') {
+      id = /^(\d{6,20})(?:-|$)/.exec(parts[1] ?? '')?.[1];
+    } else if (source.provider === 'workable') {
+      id = parts[1] === 'j' && /^[A-Z\d]{6,16}$/i.test(parts[2] ?? '') ? parts[2].toUpperCase() : undefined;
     }
     return id ? { key:source.id + ':' + id, source, externalId:id } : null;
   } catch { return null; }
@@ -181,14 +194,11 @@ export function jsonPostings(html, base) {
 const countryNames=new Intl.DisplayNames(['en'],{type:'region'});
 const countriesName=value=>typeof value!=='string'?'':/^[A-Z]{2}$/.test(value)?countryNames.of(value):
   ({USA:'United States',UK:'United Kingdom'})[value]??value;
-function declaredSeniority(title) {
-  const role=String(title??'');
-  if (/\b(?:intern(?:ship)?|apprentice)\b/i.test(role)) return 'Internship';
-  if (/\b(?:new grad(?:uate)?|early career|entry[- ]level|junior|jr\.?)\b/i.test(role)) return 'Entry level';
-  if (/\b(?:senior|sr\.?)\b/i.test(role)) return 'Senior';
-  if (/\b(?:principal|distinguished)\b/i.test(role)) return 'Principal';
-  if (/^staff (?:software|design|product|data|security|engineer)/i.test(role)) return 'Staff';
-  return '';
+// Workday shows only relative labels; they bound age from below but never prove recency.
+export function workdayAgeFloor(label, at = Date.now()) {
+  const text=String(label??'').toLowerCase();
+  const days=/yesterday/.test(text)?1:Number(/(\d+)\+?\s*days?\s*ago/.exec(text)?.[1]);
+  return Number.isFinite(days)&&days>=1?new Date(at-days*86_400_000).toISOString():null;
 }
 function record(source, item) {
   const url = canonicalUrl(item.url);
@@ -197,9 +207,10 @@ function record(source, item) {
   const externalId = item.externalId || identity?.externalId || url;
   const key = source.id + ':' + externalId;
   const keys = [...new Set([key,identity?.key].filter(Boolean))];
-  return { ...item, seniority:item.seniority||declaredSeniority(item.title), externalId, key, keys, url, company:item.company || source.name || source.tenant,
+  const postedAt = exactDate(item.postedAt) ? new Date(item.postedAt).toISOString() : null;
+  return { ...item, seniority:item.seniority||levelOf(item.title), ageFloor:earliest(item.ageFloor, postedAt), externalId, key, keys, url, company:item.company || source.name || source.tenant,
     official:item.official ?? !['rss','github'].includes(source.provider), provider:identity?.source.provider ?? source.provider,
-    postedAt:exactDate(item.postedAt) ? new Date(item.postedAt).toISOString() : null,
+    postedAt,
     dateEvidence:item.postedAt ? { date:item.postedAt, kind:item.dateKind, url:item.evidenceUrl ?? source.endpoint } : undefined };
 }
 
@@ -241,7 +252,71 @@ export async function respectWorkdayRobots(source,fetcher,signal) {
   }
 }
 
-async function workday(source, fetcher, options) {
+async function smartrecruiters(source, fetcher, options) {
+  const items=[];
+  for (let offset=0; offset<5000; offset+=100) {
+    const page=await json(await fetcher(source.endpoint+'?limit=100&offset='+offset,options));
+    if (!Array.isArray(page.content) || !Number.isInteger(page.totalFound)) throw new SourceError('Invalid SmartRecruiters listing.');
+    for (const job of page.content) {
+      const place=job.location??{};
+      items.push({externalId:String(job.id),title:job.name,company:job.company?.name,requisition:job.refNumber,
+        location:[place.city,place.region,countriesName(String(place.country??'').toUpperCase())].filter(Boolean).join(', '),
+        countries:place.country?[countriesName(String(place.country).toUpperCase())]:undefined,locationCertain:!!place.city&&!place.remote,
+        workMode:place.remote?'Remote':place.hybrid?'Hybrid':'',employmentType:job.typeOfEmployment?.label,
+        url:'https://jobs.smartrecruiters.com/'+source.tenant+'/'+job.id,postedAt:job.releasedDate,dateKind:'SmartRecruiters.releasedDate'});
+    }
+    if (items.length>=page.totalFound || !page.content.length) {
+      if (items.length!==page.totalFound) throw new SourceError('SmartRecruiters pagination was incomplete.');
+      return {items:items.map(item=>record(source,item))};
+    }
+  }
+  throw new SourceError('SmartRecruiters listing exceeded the supported limit.');
+}
+async function workable(source, fetcher, options) {
+  const items=[];
+  let token;
+  for (let page=0; page<60; page++) {
+    const data=await json(await fetcher(source.endpoint,{...options,method:'POST',body:{query:'',location:[],department:[],worktype:[],remote:[],...(token?{token}:{})}}));
+    if (!Array.isArray(data.results) || !Number.isInteger(data.total)) throw new SourceError('Invalid Workable listing.');
+    for (const job of data.results.filter(job=>job.state==='published'&&!job.isInternal)) {
+      // Workable publishes a date only; it bounds age but cannot prove a job is new within hours.
+      const published=Date.parse(job.published);
+      items.push({externalId:String(job.shortcode).toUpperCase(),title:job.title,location:[job.location?.city,job.location?.region,job.location?.country].filter(Boolean).join(', '),
+        countries:job.location?.country?[job.location.country]:undefined,workMode:titleCase(job.workplace==='on_site'?'On-site':job.workplace),
+        employmentType:{full:'Full-time',part:'Part-time',contract:'Contract',temporary:'Temporary'}[job.type]??'',
+        url:'https://apply.workable.com/'+source.tenant+'/j/'+job.shortcode+'/',
+        ageFloor:Number.isFinite(published)&&published+86_400_000<Date.now()?new Date(published+86_400_000).toISOString():null});
+    }
+    token=data.nextPage;
+    if (!token) return {items:items.map(item=>record(source,item))};
+  }
+  throw new SourceError('Workable listing exceeded the supported limit.');
+}
+// Hacker News "Who is hiring?" (startups): the current monthly thread through the public Algolia API.
+const decode = value => plain('<p>'+String(value??'')+'</p>');
+export function hiringRows(thread) {
+  return (thread.children ?? []).filter(comment=>comment?.text && Number.isInteger(comment.id)).flatMap(comment=>{
+    const first = decode(String(comment.text).split(/<p>/i)[0]);
+    const parts = first.split('|').map(trim).filter(Boolean);
+    const links = [...String(comment.text).matchAll(/href="([^"]+)"/gi)].map(match=>absolute(decode(match[1]),'https://example.com/')).filter(Boolean);
+    const url = links.find(link=>postingIdentity(link)) ?? links.find(link=>/greenhouse\.io|ashbyhq\.com|lever\.co|workable\.com|smartrecruiters\.com|myworkdayjobs\.com|\/(?:careers?|jobs?)(?:[\/?#]|$)/i.test(link)) ?? links[0];
+    if (parts.length < 2 || !url) return [];
+    const where = parts.slice(2).filter(part=>/remote|onsite|on-site|hybrid|,|\b(?:US|USA|UK|EU|NYC|SF)\b/i.test(part)&&!/full.?time|part.?time|contract|intern|salary|equity|visa|[€$£]|\d+k\b/i.test(part)&&!/^(?:remote|onsite|on-site|hybrid)$/i.test(part)).join(' · ');
+    const listed = Number(comment.created_at_i) > 0 ? new Date(comment.created_at_i*1000).toISOString() : null;
+    return [{externalId:String(comment.id),url,company:parts[0].slice(0,160),title:parts[1].slice(0,240),location:where.slice(0,240),
+      workMode:/\bremote\b/i.test(first)?'Remote':/\bhybrid\b/i.test(first)?'Hybrid':/\bon-?site\b/i.test(first)?'On-site':'',
+      official:false,listedAt:listed,ageFloor:listed,jd:decode(comment.text).slice(0,JOB_DESCRIPTION_LIMIT)}];
+  });
+}
+async function hackerNews(source, fetcher, options) {
+  const search = await json(await fetcher(source.endpoint,options));
+  const story = (search.hits ?? []).find(hit=>/who is hiring\?/i.test(hit.title ?? '') && /^\d+$/.test(String(hit.objectID)));
+  if (!story) throw new SourceError('No current "Who is hiring?" thread was found.');
+  const thread = await json(await fetcher('https://hn.algolia.com/api/v1/items/'+story.objectID,options));
+  if (String(thread.id) !== String(story.objectID) || !Array.isArray(thread.children)) throw new SourceError('The hiring thread was incomplete.');
+  return { items:hiringRows(thread).map(item=>record({...source,name:'Hacker News'},{...item,attribution:'Hacker News'})) };
+}
+async function workday(source, fetcher, options, quick=false) {
   if (!source.permitted) throw new SourceError('Confirm that this career site permits automated public access before connecting.');
   const result = [];
   let total;
@@ -254,12 +329,14 @@ async function workday(source, fetcher, options) {
       if (typeof line.externalPath!=='string' || !line.externalPath.startsWith('/job/')) throw new SourceError('Workday returned an unrecognized posting path.');
       const externalId = workdayId(line.externalPath ?? '') ?? line.bulletFields?.[0] ?? line.externalPath;
       const url = absolute('/' + source.site + line.externalPath,source.origin);
-      result.push(record(source,{ externalId,url,title:line.title,location:line.locationsText,postingLabel:line.postedOn }));
+      result.push(record(source,{ externalId,url,title:line.title,location:line.locationsText,postingLabel:line.postedOn,ageFloor:workdayAgeFloor(line.postedOn) }));
     }
     if (result.length === total) {
       if (new Set(result.map(item => item.key)).size !== total) throw new SourceError('Workday pagination repeated job IDs.');
       return { items:result };
     }
+    // Quick checks read the newest pages for new jobs only; closures need a complete snapshot.
+    if (quick && offset >= 20) return { items:result, partial:true };
   }
   throw new SourceError('Workday pagination exceeded the supported limit.');
 }
@@ -290,6 +367,23 @@ function githubRows(data) {
   if (!results.length) throw new SourceError('No supported job rows in this Markdown list.');
   return results;
 }
+// Aggregated JSON lists (SimplifyJobs listings.json): thousands of employers in one request.
+const SPONSORSHIP={'Offers Sponsorship':'Likely','Does Not Offer Sponsorship':'Not Supported','U.S. Citizenship is Required':'Not Supported'};
+export function listingRows(data, source) {
+  let rows;
+  try { rows=JSON.parse(data); } catch { throw new SourceError('The JSON job list could not be read.'); }
+  if (!Array.isArray(rows)) throw new SourceError('The JSON job list has an unsupported layout.');
+  return rows.filter(row=>row&&row.active!==false&&row.is_visible!==false&&typeof row.url==='string'&&row.title&&row.company_name).flatMap(row=>{
+    const url=absolute(row.url,'https://github.com/');
+    if (!url) return [];
+    const places=Array.isArray(row.locations)?row.locations:[...String(row.locations??'').matchAll(/'([^']+)'|"([^"]+)"/g)].map(match=>match[1]??match[2]);
+    const listed=Number(row.date_posted)>0?new Date(Number(row.date_posted)*1000).toISOString():null;
+    const status=SPONSORSHIP[row.sponsorship];
+    return [{url,title:trim(row.title),company:trim(row.company_name),location:places.map(trim).filter(Boolean).join(' · '),official:false,
+      attribution:source.name,listedAt:listed&&Date.parse(listed)<=Date.now()?listed:null,ageFloor:listed&&Date.parse(listed)<=Date.now()?listed:null,
+      ...(status?{sponsorship:{status,items:[{status,scope:'visa sponsorship',text:source.name+' lists: '+row.sponsorship,url}]}}:{})}];
+  });
+}
 function feedRows(data, source) {
   const doc = parseDocument(data,{xmlMode:true});
   const root = doc.children.find(node => ['rss','feed','rdf:RDF'].includes(node.name));
@@ -306,9 +400,12 @@ function feedRows(data, source) {
   });
 }
 
-export async function collect(source, { fetcher = fetchPublic, signal, full = false } = {}) {
+export async function collect(source, { fetcher = fetchPublic, signal, full = false, quick = false } = {}) {
   const options = {signal, ...(full ? {} : {etag:source.etag,modified:source.modified})};
-  if (source.provider === 'workday') return workday(source,fetcher,options);
+  if (source.provider === 'workday') return workday(source,fetcher,options,quick && !full);
+  if (source.provider === 'smartrecruiters') return smartrecruiters(source,fetcher,{signal});
+  if (source.provider === 'hn') return hackerNews(source,fetcher,{signal});
+  if (source.provider === 'workable') return workable(source,fetcher,{signal});
   const response = await fetcher(source.endpoint, options);
   if (response.status === 304) return { unchanged:true };
   let items;
@@ -317,7 +414,7 @@ export async function collect(source, { fetcher = fetchPublic, signal, full = fa
     if (!Array.isArray(data.jobs) || (data.meta?.total != null && data.meta.total !== data.jobs.length)) throw new SourceError('Greenhouse listing was incomplete.');
     items = data.jobs.filter(job => job.internal_job_id !== null).map(job => ({
       externalId:String(job.id), requisition:job.requisition_id, title:job.title, company:data.name, location:job.location?.name,
-      url:job.absolute_url, updatedAt:job.updated_at, jd:job.content ? plain(job.content) : undefined
+      url:job.absolute_url, updatedAt:job.updated_at, postedAt:job.first_published, dateKind:'Greenhouse.first_published', jd:job.content ? plain(job.content) : undefined
     }));
   } else if (source.provider === 'ashby') {
     const data = await json(response);
@@ -335,19 +432,21 @@ export async function collect(source, { fetcher = fetchPublic, signal, full = fa
         countries:addresses.map(address=>countriesName(address.addressCountry)).filter(Boolean),
         locationCertain:!!addresses[0]?.addressLocality&&!job.isRemote,
         workMode:titleCase(job.workplaceType ?? (job.isRemote ? 'Remote' : '')), employmentType:employment[job.employmentType] ?? job.employmentType,
-        url:job.applyUrl || job.jobUrl, updatedAt:job.publishedAt, jd:job.descriptionPlain?.slice(0,48_000) ?? plain(job.descriptionHtml),
+        url:job.applyUrl || job.jobUrl, updatedAt:job.publishedAt, postedAt:job.publishedAt, dateKind:'Ashby.publishedAt', jd:job.descriptionPlain?.slice(0,48_000) ?? plain(job.descriptionHtml),
         salary:comp ? {min:comp.minValue,max:comp.maxValue,currency:comp.currency,period:period(comp.interval)} : undefined };
     });
   } else if (source.provider === 'lever') {
     const data = await json(response);
     if (!Array.isArray(data) || data.length >= 10000) throw new SourceError('Invalid or excessive Lever listing.');
-    items = data.map(job => ({ externalId:job.id,title:job.text,location:job.categories?.allLocations?.join(' · ') || job.categories?.location,
+    items = data.map(job => ({ externalId:job.id,title:job.text,
+      postedAt:Number.isFinite(job.createdAt)?new Date(job.createdAt).toISOString():undefined,dateKind:'Lever.createdAt',
+      countries:typeof job.country==='string'&&/^[A-Z]{2}$/.test(job.country)?[countriesName(job.country)]:undefined,location:job.categories?.allLocations?.join(' · ') || job.categories?.location,
       employmentType:job.categories?.commitment,workMode:titleCase(job.workplaceType),url:job.applyUrl || job.hostedUrl,
       jd:[job.descriptionPlain,job.additionalPlain,...(job.lists ?? []).map(section => plain(section.text + ' ' + section.content))].filter(Boolean).join('\n').slice(0,48_000),
       salary:job.salaryRange ? {min:job.salaryRange.min,max:job.salaryRange.max,currency:job.salaryRange.currency,period:period(job.salaryRange.interval)} : undefined }));
   } else {
     const data = await limited(response);
-    items = source.provider === 'github' ? githubRows(data) : source.provider === 'rss' ? feedRows(data,source) : jsonPostings(data,source.url);
+    items = source.provider === 'github' ? (/\.json$/i.test(source.site) ? listingRows(data,source) : githubRows(data)) : source.provider === 'rss' ? feedRows(data,source) : jsonPostings(data,source.url);
     if (source.provider === 'careers' && !items.length) {
       const doc = parseDocument(data);
       const feed = tags(doc,'link').find(node => /^(application\/(rss|atom)\+xml)$/.test(node.attribs.type ?? ''));
@@ -395,6 +494,18 @@ export async function jobDetails(item, source, fetcher, signal) {
       return { ...item,jd:/<\/?[a-z][^>]*>/i.test(first) ? plain(first) : first,requisition:row.requisition_id ?? item.requisition };
     }
   }
+  if (source.provider === 'smartrecruiters' && /^\d+$/.test(item.externalId)) {
+    const row = await json(await fetcher(source.endpoint + '/' + item.externalId,{signal}));
+    if (String(row.id) !== item.externalId) throw new SourceError('Job detail identity did not match.');
+    const sections = Object.values(row.jobAd?.sections ?? {}).map(section => section?.text).filter(Boolean).join('\n');
+    return sections ? { ...item,jd:plain(sections) } : item;
+  }
+  if (source.provider === 'workable' && /^[A-Z\d]{6,16}$/.test(item.externalId)) {
+    const row = await json(await fetcher('https://apply.workable.com/api/v2/accounts/' + source.tenant + '/jobs/' + item.externalId,{signal}));
+    if (String(row.shortcode).toUpperCase() !== item.externalId) throw new SourceError('Job detail identity did not match.');
+    const text = [row.description,row.requirements,row.benefits].filter(value=>typeof value==='string'&&value).join('\n');
+    return text ? { ...item,jd:plain(text) } : item;
+  }
   if (source.provider === 'workday') {
     const url = new URL(item.url);
     const path = url.pathname.slice(('/' + source.site).length);
@@ -405,3 +516,13 @@ export async function jobDetails(item, source, fetcher, signal) {
   }
   return item;
 }
+
+// Find a company's public ATS board from its name (Settings → Sources → Add companies).
+export function boardCandidates(name) {
+  const words=String(name??'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/&/g,' and ').replace(/[^\w\s-]/g,' ').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const slugs=[...new Set([words.join('').toLowerCase(),words.join('-').toLowerCase(),words.join('')])].filter(slug=>pathToken.test(slug));
+  const hosts=['https://jobs.ashbyhq.com/','https://job-boards.greenhouse.io/','https://jobs.lever.co/','https://jobs.smartrecruiters.com/','https://apply.workable.com/'];
+  return hosts.flatMap(host=>slugs.filter(slug=>host.includes('smartrecruiters')||slug===slug.toLowerCase()).map(slug=>host+slug));
+}
+export const BOARD_API_ORIGINS=['https://api.ashbyhq.com/*','https://boards-api.greenhouse.io/*','https://api.lever.co/*','https://api.smartrecruiters.com/*','https://apply.workable.com/*'];

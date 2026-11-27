@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { db, settings, updateSettings } from '../src/db.js';
 import { nowISO } from '../src/domain.js';
 import { saveSnapshot, sourceFailure } from '../src/discovery.js';
-import { appendEvent, changeStage, saveApplication, undoEvent } from '../src/tracker.js';
+import { appendEvent, changeStage, deleteApplication, saveApplication, undoEvent } from '../src/tracker.js';
 import { applicationCSV, csvPreview, importApplicationCSV, makeBackup, previewBackup, restoreBackup } from '../src/portability.js';
 import { classifyMail, linkMail, mailEvent, syncMail } from '../src/mail.js';
 import { newClaude } from '../src/intelligence.js';
@@ -43,6 +43,74 @@ test('baseline, complete diff, failures, reopening and lifecycle commit gate',as
   assert.equal(await saveSnapshot(source,{items:[]},0),null);
   assert.equal((await db.jobs.get(newJob.id)).active,true);
 });
+test('a new board adds no backlog and a same-role relisting is a repost',async()=>{
+  await db.sources.add(source);
+  const old=new Date(Date.now()-4*60_000).toISOString();
+  await saveSnapshot(source,{items:[row(1,'Engineer'),row(2,'Designer')]},0,old);
+  const {freshness}=await import('../src/domain.js');
+  const later=Date.now()+25*3600_000;
+  assert.ok((await db.jobs.toArray()).every(job=>freshness(job,24,later)==='older'&&freshness(job,24)==='unknown'));
+  await saveSnapshot(source,{items:[row(2,'Designer'),row(3,'Engineer')]},0);
+  await saveSnapshot(source,{items:[row(2,'Designer'),row(3,'Engineer'),row(4,'Analyst')]},0);
+  const jobs=await db.jobs.toArray();
+  assert.equal(jobs.find(job=>job.externalId==='3').repost,true);
+  const fresh=jobs.find(job=>job.externalId==='4');
+  assert.equal(fresh.repost,false);assert.equal(freshness(fresh,24),'detected');
+});
+test('applications record level, source and the exact resume version they used',async()=>{
+  await db.sources.add(source);
+  await saveSnapshot(source,{items:[row(7,'Senior Data Analyst')]},0);
+  const job=(await db.jobs.toArray())[0];
+  const discovered=(await saveApplication(null,{jobId:job.id})).application;
+  assert.equal(discovered.source,'MeshJob · Example');assert.equal(discovered.seniority,'Senior');
+  const manual=(await saveApplication({...fixtureJob,url:'https://job-boards.greenhouse.io/acme/jobs/55',attribution:'job-boards.greenhouse.io'})).application;
+  assert.equal(manual.source,'Company site');
+  const {item}=await storeMaterial({file:new File(['%PDF-1.4\nA'],'resume.pdf',{type:'application/pdf'}),text:'v1',type:'resume',label:'ML resume'});
+  await appendEvent({id:'m',applicationId:manual.id,kind:'materials',materials:{resume:{id:item.id,name:item.name,label:item.label,revision:1,hash:item.hash}}});
+  await storeMaterial({id:item.id,file:new File(['%PDF-1.4\nB'],'resume.pdf',{type:'application/pdf'}),text:'v2',type:'resume',label:'ML resume'});
+  const {materialFor,versionLabel}=await import('../src/materials.js');
+  const used=await materialFor((await db.applications.get(manual.id)).materials.resume);
+  assert.equal(await used.blob.text(),'%PDF-1.4\nA');assert.equal(used.archived,true);
+  assert.equal((await db.materials.get(item.id)).revision,2);
+  assert.equal(versionLabel({label:'ML resume',revision:1}),'ML resume · v1');
+});
+test('aggregated lists suggest boards hiring for the target roles, minus dismissed ones',async()=>{
+  const {suggestBoards}=await import('../src/service.js');
+  const config=await updateSettings(current=>({...current,preferences:{...current.preferences,titles:['Software Engineer']}}));
+  const job=(url,title,company)=>({job:{url,title,company}});
+  const uuid=n=>'13e1e478-6330-47c5-9fb0-d07889111c'+String(n).padStart(2,'0');
+  await db.runtime.put({id:'dismissed:'+detectSource('https://jobs.lever.co/nope').id,kind:'dismissed',expiresAt:Date.now()+1e9});
+  await suggestBoards([job('https://jobs.ashbyhq.com/acme-ai','Founding Software Engineer','Acme AI'),job('https://jobs.ashbyhq.com/rillet/'+uuid(1),'Software Engineer','Rillet'),job('https://jobs.ashbyhq.com/rillet/'+uuid(2),'Backend Software Engineer','Rillet'),
+    job('https://jobs.lever.co/nope/'+uuid(3),'Software Engineer','Nope'),job('https://job-boards.greenhouse.io/acme/jobs/9','Accountant','Acme')],config,0);
+  const rows=await db.runtime.where('kind').equals('suggestion').toArray();
+  assert.deepEqual(rows.map(row=>[row.source.provider,row.source.name,row.count]).sort(),[['ashby','Acme AI',1],['ashby','Rillet',2]]);
+});
+test('manual tracking changes survive backups and deletion retains the job and mail deduplication',async()=>{
+  const {application}=await saveApplication(fixtureJob,{stage:'Preparing'});
+  const applicationId=application.id;
+  await appendEvent({id:'mail-proof',kind:'email-confirmation',applicationId,messageId:'mail1',stage:'Applied',at:'2020-01-02T00:00:00Z'});
+  const submissionDate='2020-02-02T00:00:00.000Z';
+  const {application:edited}=await saveApplication({...fixtureJob,notes:'Follow-up scheduled'},{existingId:applicationId,
+    tracking:{stage:'Interview',submissionDate}});
+  assert.equal(edited.status,'Interview');
+  assert.equal(edited.appliedAt,submissionDate);
+  assert.equal(edited.notes,'Follow-up scheduled');
+  const backup=await previewBackup(await makeBackup());
+  assert.ok(backup.records.events.some(event=>event.submissionDate===submissionDate));
+  const {application:cleared}=await saveApplication(fixtureJob,{existingId:applicationId,tracking:{stage:'Saved',submissionDate:null}});
+  assert.equal(cleared.appliedAt,null);
+  assert.equal(cleared.status,'Saved');
+  await db.runtime.add({id:'form-tab:19',kind:'form',appId:applicationId});
+  assert.equal(await deleteApplication(applicationId),true);
+  assert.equal(await deleteApplication(applicationId),false);
+  assert.ok(await db.jobs.get(application.jobId));
+  assert.equal(await db.applications.get(applicationId),undefined);
+  assert.equal(await db.runtime.get('form-tab:19'),undefined);
+  assert.equal(await db.events.where('applicationId').equals(applicationId).count(),0);
+  assert.equal((await db.events.get('mail-proof')).pendingRead,false);
+  assert.ok(await db.events.where('messageId').equals('mail1').first());
+});
+
 test('requisitions deduplicate without merging same-company different roles',async()=>{
   const first=await saveApplication(fixtureJob,{stage:'Preparing'});
   const same=await saveApplication({...fixtureJob,url:fixtureJob.url+'?utm_source=x'});
@@ -106,27 +174,22 @@ test('backup round-trip preserves linked history, job description, PDF, and stri
   assert.equal((await db.events.where('applicationId').equals(application.id).toArray()).length,2);
   assert.equal((await restoreBackup(pack,'merge')).applications,0);
 });
-test('Gmail auto-read is per message, commit-before-modify, and idempotent for replayed history',async()=>{
+test('Gmail sync is read-only, idempotent for replayed history, and links the right account',async()=>{
   const {application}=await saveApplication(fixtureJob);
-  await updateSettings({gmail:true,markRead:true,gmailDays:14});
+  await updateSettings({gmail:true,gmailSince:new Date(Date.now()-3600_000).toISOString()});
   const examples={
+    old:{...fixtureMail,id:'old',threadId:'thread0',subject:'Interview invitation',at:new Date(Date.now()-7200_000).toISOString()},
     m1:{...fixtureMail,at:new Date().toISOString()},
     m2:{...fixtureMail,id:'m2',threadId:'thread2',subject:'CodeSignal assessment invitation',snippet:'Please complete by 2026-12-05 at 10:00 EST.',at:new Date().toISOString()},
     m3:{...fixtureMail,id:'m3',threadId:'thread3',subject:'Acme Health recruitment next steps',snippet:'Please respond about your application.',at:new Date().toISOString()}
   };
-  const modified=[];
-  let reads=0,notifies=0;
+  let reads=0,notifies=0,query='';
   const api=async (path,args={})=>{
-    if(path==='/profile')return {historyId:'100'};
+    assert.ok(!path.endsWith('/modify')&&!args.body,'MeshJob must not write to Gmail');
+    if(path==='/profile')return {historyId:'100',emailAddress:'person@example.invalid'};
     if(path==='/history')return {historyId:'101',history:[{messagesAdded:Object.keys(examples).map(id=>({message:{id}}))}]};
-    if(path==='/messages')return {messages:Object.keys(examples).map(id=>({id}))};
+    if(path==='/messages'){query=args.query.q;return {messages:Object.keys(examples).map(id=>({id}))};}
     const id=path.split('/')[2],row=examples[id];
-    if(path.endsWith('/modify')) {
-      assert.equal(id,'m1');assert.deepEqual(args.body,{removeLabelIds:['UNREAD']});
-      assert.equal((await db.events.get('gmail:'+id)).applicationId,application.id);
-      assert.equal((await db.applications.get(application.id)).status,'Applied');
-      modified.push(id);return {};
-    }
     assert.equal(args.query.format,'full');
     assert.ok(!/body|parts|raw|attachments/.test(args.query.fields));
     reads++;
@@ -136,9 +199,75 @@ test('Gmail auto-read is per message, commit-before-modify, and idempotent for r
   const config=await settings();
   await syncMail({config,api,notify:()=>{notifies++;}});
   await syncMail({config,api,notify:()=>{notifies++;}});
-  assert.deepEqual(modified,['m1']);assert.equal(reads,3);assert.equal(notifies,2);
+  // The mock replays the pre-connection message on both syncs; it is read for its date and ignored.
+  assert.equal(reads,5);assert.equal(notifies,2);
+  assert.equal(await db.events.get('gmail:old'),undefined,'mail from before the connection is ignored');
+  assert.ok(Number(/after:(\d+)/.exec(query)[1])*1000>=Date.now()-3600_000-1000);
+  assert.match(query,/from:greenhouse\.io/);assert.match(query,/"Acme Health"/);assert.match(query,/-category:promotions/);
+  assert.equal((await db.applications.get(application.id)).status,'Applied');
+  const confirmation=await db.events.get('gmail:m1');
+  assert.equal(confirmation.url,'https://mail.google.com/mail/?authuser=person%40example.invalid#all/m1');
   const actions=await db.events.filter(e=>e.urgent).toArray();
-  assert.equal(actions.length,2);assert.ok(actions.every(e=>!e.pendingRead&&!e.applicationId));
+  assert.equal(actions.length,2);assert.ok(actions.every(e=>!e.applicationId));
+});
+test('Gmail sign-in accepts any account and checks state, scope and redirect',async()=>{
+  const {authUrl,parseRedirect,redirectUri,CLIENT_ID}=await import('../src/mail.js');
+  const redirect=redirectUri('abcdefghijklmnopabcdefghijklmnop');
+  assert.equal(redirect,'https://abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/');
+  const url=new URL(authUrl({clientId:'1-a.apps.googleusercontent.com',redirect,interactive:true,state:'s1'}));
+  assert.equal(url.searchParams.get('prompt'),'select_account');assert.equal(url.searchParams.get('response_type'),'token');
+  assert.equal(url.searchParams.get('scope'),'https://www.googleapis.com/auth/gmail.readonly');assert.equal(url.searchParams.get('login_hint'),null);
+  const silent=new URL(authUrl({clientId:'1-a.apps.googleusercontent.com',redirect,interactive:false,account:'other@example.invalid',state:'s2'}));
+  assert.equal(silent.searchParams.get('prompt'),'none');assert.equal(silent.searchParams.get('login_hint'),'other@example.invalid');
+  const ok=parseRedirect(redirect+'#access_token=t&expires_in=3599&state=s1&scope=https://www.googleapis.com/auth/gmail.readonly',"s1",redirect);
+  assert.equal(ok.token,'t');assert.ok(ok.expiresAt>Date.now());
+  assert.throws(()=>parseRedirect(redirect+'#access_token=t&expires_in=3599&state=x&scope=https://www.googleapis.com/auth/gmail.readonly','s1',redirect),/state/);
+  assert.throws(()=>parseRedirect(redirect+'#access_token=t&expires_in=3599&state=s1&scope=email','s1',redirect),/not granted/);
+  assert.throws(()=>parseRedirect('https://evil.example/#access_token=t','s1',redirect),/unexpected/);
+  assert.ok(CLIENT_ID.test('123-abc.apps.googleusercontent.com'));assert.ok(!CLIENT_ID.test('abc'));
+});
+test('Outlook sync reads only new inbox mail through Graph and opens it in Outlook',async()=>{
+  const {syncMail,authUrl,parseRedirect}=await import('../src/mail.js');
+  const url=new URL(authUrl({provider:'outlook',clientId:'00000000-0000-0000-0000-000000000000',redirect:'https://x.chromiumapp.org/',interactive:true,state:'s'}));
+  assert.equal(url.origin+url.pathname,'https://login.microsoftonline.com/common/oauth2/v2.0/authorize');
+  assert.match(url.searchParams.get('scope'),/Mail\.Read/);assert.equal(url.searchParams.get('response_mode'),'fragment');
+  assert.equal(parseRedirect('https://x.chromiumapp.org/#access_token=t&expires_in=3600&state=s&scope=Mail.Read%20User.Read','s','https://x.chromiumapp.org/','outlook').token,'t');
+  await saveApplication(fixtureJob);
+  const since=new Date(Date.now()-3600_000).toISOString();
+  await updateSettings({gmail:true,mailProvider:'outlook',gmailSince:since});
+  const row=(id,subject,minutes,preview=fixtureMail.snippet)=>({id:'AAMkAD'+id+'==/long+id',conversationId:'conv'+id,subject,bodyPreview:preview,
+    receivedDateTime:new Date(Date.now()-minutes*60_000).toISOString(),from:{emailAddress:{name:'Acme Health',address:'jobs@acmehealth.example.com'}},isRead:false,
+    webLink:'https://outlook.live.com/owa/?ItemID='+id});
+  const paths=[];
+  const api=async path=>{
+    paths.push(path);
+    if(path.includes('$skiptoken')) return {value:[row(3,'Schedule your interview with Acme Health',5)]};
+    return {value:[row(0,'Acme Health Clinical Coordinator · Application received',120),row(1,'Acme Health Clinical Coordinator · Application received',30),row(2,'Weekly newsletter',20,'Our favorite recipes this week.')],
+      '@odata.nextLink':'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skiptoken=abc'};
+  };
+  const result=await syncMail({config:await settings(),api});
+  assert.equal(result.accepted,2);assert.equal(result.urgent,1);
+  assert.match(decodeURIComponent(paths[0]),/receivedDateTime ge /);
+  const events=(await db.events.toArray()).filter(event=>event.id.startsWith('outlook:'));
+  assert.equal(events.length,2);assert.ok(events.every(event=>/^o[\da-f]{40}$/.test(event.messageId)&&event.url.startsWith('https://outlook.live.com/')));
+  assert.equal((await db.applications.toArray())[0].status,'Interview');
+  const cursor=await db.runtime.get('outlook-cursor');assert.equal(cursor.nextLink,null);assert.ok(cursor.after);
+});
+test('any mailbox: pasted text and saved .eml files are classified and linked once',async()=>{
+  const {addMail,parseMailText}=await import('../src/mail.js');
+  const {application}=await saveApplication(fixtureJob);
+  const eml='From: Acme Health <jobs@acmehealth.example.com>\r\nSubject: Acme Health Clinical Coordinator interview\r\nDate: Tue, 24 Nov 2026 10:00:00 +0000\r\n'+
+    'Content-Type: multipart/alternative; boundary="b1"\r\n\r\n--b1\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n'+
+    'We would like to invite you to an interview for REQ-1234. Please share your availability by Nov 30, 2026 at 5pm EST.=\r\n Thanks\r\n--b1--\r\n';
+  const parsed=parseMailText(eml);
+  assert.equal(parsed.subject,'Acme Health Clinical Coordinator interview');assert.equal(parsed.at,'2026-11-24T10:00:00.000Z');
+  assert.match(parsed.snippet,/availability by Nov 30, 2026 at 5pm EST\. Thanks/);
+  const first=await addMail(eml);
+  assert.equal(first.event.category,'interview');assert.equal(first.event.urgent,true);assert.equal(first.event.applicationId,application.id);
+  assert.equal((await addMail(eml)).duplicate,true);
+  const pasted=await addMail('Acme Health Clinical Coordinator · Application received\nThanks for applying to the Clinical Coordinator position at Acme Health. REQ-1234');
+  assert.equal(pasted.event.category,'confirmation');assert.equal(pasted.event.applicationId,application.id);
+  await assert.rejects(()=>addMail('   '),/Paste the email/);
 });
 test('company alone does not link multiple or single applications',async()=>{
   const examples=[{...fixtureJob,id:'a',createdAt:'2026-11-19T00:00:00Z'},
@@ -147,7 +276,7 @@ test('company alone does not link multiple or single applications',async()=>{
   assert.equal(linkMail({...fixtureMail,subject:'From Acme Health',snippet:'Please give us availability.'},examples),null);
   const action={...fixtureMail,subject:'Your offer letter',snippet:'Please sign by November 25, 2026 at 9:00 EST.'};
   const event=mailEvent(action,classifyMail(action),null);
-  assert.equal(event.urgent,true);assert.equal(event.pendingRead,false);assert.equal(event.deadline.timezone,'EST');
+  assert.equal(event.urgent,true);assert.equal(event.deadline.timezone,'EST');
 });
 test('Claude reserves budget, caps search tool uses, and reconciles actual estimated cost',async()=>{
   const config=await updateSettings({budget:.08,dailyBudget:.08,runBudget:.08,searchesPerRound:3});
@@ -156,6 +285,7 @@ test('Claude reserves budget, caps search tool uses, and reconciles actual estim
     calls++;
     const body=JSON.parse(req.body);
     assert.equal(body.tools[0].max_uses,3);
+    assert.ok(body.tools[0].allowed_domains.includes('greenhouse.io'));assert.equal(body.output_config.effort,'low');assert.equal(body.output_config.format,undefined);
     assert.equal(req.headers['x-api-key'],'fixture-key');
     return Response.json({usage:{input_tokens:1000,output_tokens:900,server_tool_use:{web_search_requests:2}},stop_reason:'end_turn',content:[
       {type:'server_tool_use',name:'web_search'},
@@ -168,6 +298,35 @@ test('Claude reserves budget, caps search tool uses, and reconciles actual estim
   await updateSettings({budget:0});
   await assert.rejects(()=>claude.searchJobs({titles:['Teacher']}),/budget/);
   assert.equal(calls,1);
+});
+test('matching uses structured output, caches profile facts and ignores non-matching edits',async()=>{
+  const config=await settings();
+  let body;
+  const fetcher=async (url,req)=>{
+    body=JSON.parse(req.body);
+    return Response.json({usage:{input_tokens:800,output_tokens:200},stop_reason:'end_turn',content:[{type:'text',text:JSON.stringify({
+      skills:80,experience:60,seniority:70,domain:50,strengths:['Python'],gaps:[],confidence:'High',resumeId:null,coverId:null,visaAssessment:{status:'Unknown',refs:[]}})}]});
+  };
+  const claude=newClaude({config,key:'fixture-key',generation:null,fetcher});
+  const result=await claude.evaluateJob({role:{title:'Engineer'}},{facts:{skills:'Python'}});
+  assert.equal(result.skills,80);
+  assert.equal(body.output_config.format.type,'json_schema');assert.equal(body.output_config.format.schema.additionalProperties,false);
+  assert.ok(!JSON.stringify(body.output_config.format.schema).includes('maxLength'));
+  assert.deepEqual(body.messages[0].content[0].cache_control,{type:'ephemeral'});
+  const {matchPreferences}=await import('../src/intelligence.js');
+  assert.deepEqual(matchPreferences({...config.preferences,freshnessHours:720,countries:['Canada']}),matchPreferences(config.preferences));
+});
+test('a Workday quick check adds new jobs without closing absent ones',async()=>{
+  const workday={...detectSource('https://example.wd5.myworkdayjobs.com/Careers'),permitted:true,name:'Example'};
+  await db.sources.add(workday);
+  const item=(n,title)=>{const key=workday.id+':R'+n;return {key,keys:[key],externalId:'R'+n,url:'https://example.wd5.myworkdayjobs.com/Careers/job/Remote/Role_R'+n,company:'Example',title,official:true};};
+  await saveSnapshot(workday,{items:[item(1,'Analyst'),item(2,'Designer')]},0);
+  await saveSnapshot(workday,{items:[item(3,'Engineer')],partial:true},0);
+  const jobs=await db.jobs.toArray();
+  assert.equal(jobs.length,3);assert.ok(jobs.every(job=>job.active));
+  assert.ok(jobs.find(job=>job.externalId==='R3').lastAbsentAt);
+  const {quickCheck}=await import('../src/discovery.js');
+  assert.equal(quickCheck(await db.sources.get(workday.id)),true);
 });
 test('cohorts count distinct submitted applications and use event history',async()=>{
   const first=(await saveApplication(fixtureJob)).application;

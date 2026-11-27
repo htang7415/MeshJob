@@ -27,10 +27,11 @@ test('freshness requires original posting evidence and keeps observation bounds 
 });
 test('wall clock slots have stable date keys and narrow non-replay windows',()=>{
   const at=(day,h,m)=>new Date(2026,10,day,h,m,0);
-  assert.equal(localSlot(at(1,18,30),DEFAULTS.slots).key,'slot:2026-11-01:18:30');
-  assert.equal(localSlot(at(1,18,31),DEFAULTS.slots).key,'slot:2026-11-01:18:30');
-  assert.equal(localSlot(at(1,18,42),DEFAULTS.slots).key,undefined);
-  assert.equal(localSlot(at(2,8,30),DEFAULTS.slots).key,'slot:2026-11-02:08:30');
+  assert.deepEqual(DEFAULTS.slots,['09:00']);
+  assert.equal(localSlot(at(1,9,0),DEFAULTS.slots).key,'slot:2026-11-01:09:00');
+  assert.equal(localSlot(at(1,9,1),DEFAULTS.slots).key,'slot:2026-11-01:09:00');
+  assert.equal(localSlot(at(1,9,12),DEFAULTS.slots).key,undefined);
+  assert.equal(localSlot(at(1,18,30),['08:30','18:30']).key,'slot:2026-11-01:18:30');
 });
 test('visa evidence keeps unknowns and ignores unsupported history exclusions',()=>{
   const policy={sponsorship:'Required'};
@@ -92,7 +93,7 @@ test('public dates are interpreted with provider-specific semantics',async()=>{
     {isListed:false,jobUrl:'https://jobs.ashbyhq.com/example/'+uuid,title:'Unlisted'}
   ]});
   const {items}=await collect(ashby,{fetcher:async()=>json});
-  assert.equal(items.length,1);assert.equal(items[0].postedAt,null);assert.equal(items[0].updatedAt,'2026-10-18T00:00:00Z');
+  assert.equal(items.length,1);assert.equal(items[0].postedAt,'2026-10-18T00:00:00.000Z');assert.equal(items[0].dateEvidence.kind,'Ashby.publishedAt');assert.equal(items[0].ageFloor,'2026-10-18T00:00:00.000Z');
   const careers=detectSource('https://careers.example.com/jobs');
   const row={title:'Developer',datePosted:'2026-10-18T00:00:00Z',url:'https://careers.example.com/jobs/1','@type':'JobPosting',description:'<p>Example</p>'};
   const page=new Response('<script type="application/ld+json">'+JSON.stringify(row)+'</script>');
@@ -188,6 +189,30 @@ test('experience and country selectors apply supported evidence and retain unkno
   assert.ok(uncertain.eligible);assert.ok(uncertain.unknown.includes('Country'));
 });
 
+test('target roles use aliases without admitting unrelated one-word overlaps',()=>{
+  const preferences={titles:['Software Engineer','Machine Learning Engineer','AI Engineer'],countries:['United States']};
+  assert.ok(preferenceDecision({title:'Senior Backend Engineer',location:'Mountain View, CA, USA'},preferences).eligible);
+  for (const title of ['Diagnostics Engineer','AI Enablement Lead','Data Scientist']) {
+    assert.ok(!preferenceDecision({title,location:'Mountain View, CA, USA'},preferences).eligible,title);
+  }
+  assert.ok(!preferenceDecision({title:'Backend Engineer',location:'Tokyo, Japan'},preferences).eligible);
+  assert.ok(preferenceDecision({title:'Backend Engineer',location:'Tokyo, Japan; Remote'},preferences).unknown.includes('Country'));
+  assert.ok(preferenceDecision({title:'AI Engineer',location:'Tokyo, Japan; Mountain View, CA, U.S.'},preferences).eligible);
+});
+
+test('current education fills enrollment and month controls without inventing a day',async()=>{
+  const {createFillPlan}=await import('../src/form-rules.js');
+  const group={kind:'education',index:0};
+  const fields=[
+    {id:'current',type:'checkbox',group,label:'I currently study here'},
+    {id:'month',type:'month',group,label:'Start month'},
+    {id:'day',type:'date',group,label:'Start date'},
+    {id:'end',type:'month',group,label:'End date'}
+  ];
+  const plan=createFillPlan(fields,{profile:{education:[{current:true,start:'2024-09',end:'2026-08'}]}});
+  assert.deepEqual(plan.map(({id,value})=>[id,value]),[['current','true'],['month','2024-09']]);
+});
+
 test('stats windows group applications by local submission date',async()=>{
   const {statsPeriod,analyze}=await import('../src/stats.js');
   const local=(m,d)=>new Date(2026,m,d,12).toISOString();
@@ -198,4 +223,156 @@ test('stats windows group applications by local submission date',async()=>{
     assert.equal(summary.overall.applications,total,period);
     assert.equal(summary.drafts,1);
   }
+});
+
+test('age evidence hides backlog, reposts and undated jobs while new evidence stays visible',async()=>{
+  const {earliest,levelOf,minYears,countriesFromLocation}=await import('../src/domain.js');
+  const {workdayAgeFloor}=await import('../src/sources.js');
+  const at=Date.parse('2026-11-20T12:00:00Z');
+  const base={active:true,official:true,firstSeenAt:'2026-11-20T11:00:00Z'};
+  assert.equal(freshness({...base,postedAt:'2025-03-01T00:00:00Z'},24,at),'older');
+  assert.equal(freshness({...base,ageFloor:'2026-10-01T00:00:00Z'},24,at),'older');
+  assert.equal(freshness({...base,firstSeenAt:'2026-11-17T00:00:00Z'},24,at),'older');
+  assert.equal(freshness({...base},24,at),'unknown');
+  assert.equal(freshness({...base,lastAbsentAt:'2026-11-20T10:50:00Z',repost:true},24,at),'older');
+  assert.equal(freshness({...base,lastAbsentAt:'2026-11-20T10:50:00Z'},24,at),'detected');
+  assert.equal(workdayAgeFloor('Posted 30+ Days Ago',at),new Date(at-30*86400000).toISOString());
+  assert.equal(workdayAgeFloor('Posted Today',at),null);
+  assert.equal(earliest(null,'2026-01-02T00:00:00Z','2025-01-02T00:00:00Z'),'2025-01-02T00:00:00Z');
+  assert.deepEqual(['Senior Software Engineer','Software Engineer II','Engineering Manager','Product Manager','New Grad Software Engineer','Staff Accountant','Software Engineering Intern']
+    .map(title=>levelOf(title)),['Senior','Mid','Manager','','Entry','','Intern']);
+  assert.equal(levelOf('Software Engineer','You have 5+ years of professional experience.'),'Senior');
+  assert.equal(minYears('3-5 years of relevant industry experience; 7 years preferred experience'),3);
+  assert.deepEqual(countriesFromLocation('San Francisco, CA'),['United States']);
+  assert.deepEqual(countriesFromLocation('London'),['United Kingdom']);
+  assert.deepEqual(countriesFromLocation('Remote - US'),['United States']);
+  assert.deepEqual(countriesFromLocation('Remote'),[]);
+  const p={titles:['Software Engineer'],countries:['United States'],seniority:['Entry level'],maxYears:2};
+  assert.ok(!preferenceDecision({title:'Software Engineer',location:'London'},p).eligible);
+  assert.ok(!preferenceDecision({title:'Senior Software Engineer',seniority:'Senior',location:'Austin, TX'},p).eligible);
+  assert.ok(!preferenceDecision({title:'Software Engineer',minYears:5,location:'Austin, TX'},p).eligible);
+  const shown=preferenceDecision({title:'Backend Engineer',location:'Austin, TX'},p);
+  assert.ok(shown.eligible);assert.equal(shown.matched,'backend engineer');assert.deepEqual(shown.unknown,['Level']);
+});
+test('ATS listings carry original timestamps and Lever countries',async()=>{
+  const gh=detectSource('https://job-boards.greenhouse.io/example');
+  const g=await collect(gh,{fetcher:async()=>Response.json({jobs:[{id:5,internal_job_id:1,title:'Engineer',absolute_url:'https://job-boards.greenhouse.io/example/jobs/5',
+    updated_at:'2026-11-19T10:00:00-05:00',first_published:'2024-01-02T10:00:00-05:00'}]})});
+  assert.equal(g.items[0].postedAt,'2024-01-02T15:00:00.000Z');
+  const lever=detectSource('https://jobs.lever.co/example');
+  const id='13e1e478-6330-47c5-9fb0-d07889111cc2';
+  const l=await collect(lever,{fetcher:async()=>Response.json([{id,text:'Engineer',createdAt:Date.parse('2026-11-01T00:00:00Z'),country:'SG',hostedUrl:'https://jobs.lever.co/example/'+id}])});
+  assert.equal(l.items[0].postedAt,'2026-11-01T00:00:00.000Z');assert.deepEqual(l.items[0].countries,['Singapore']);
+});
+
+test('options match through synonyms and prefixes and never guess between two',async()=>{
+  const {pickOption,requiredLabel,cleanLabel,learnable}=await import('../src/form-rules.js');
+  const {sourceFromReferrer}=await import('../src/tracker.js');
+  const pick=(options,value)=>options[pickOption(options,value)];
+  assert.equal(pick(['Canada','United States of America'],'United States'),'United States of America');
+  assert.equal(pick(['Colorado','California'],'CA'),'California');
+  assert.equal(pick(['Yes, I am authorized','No, I am not'],'Yes'),'Yes, I am authorized');
+  assert.equal(pick(['Master of Science','Bachelor of Science'],"Bachelor's"),'Bachelor of Science');
+  assert.equal(pick(['+44 United Kingdom','+1 United States'],'United States'),'+1 United States');
+  assert.equal(pickOption(['Yes - full time','Yes - part time','No'],'Yes'),-1);
+  assert.equal(pickOption(['Engineering','Engineering Management'],'Engineering Man'),-1);
+  assert.ok(requiredLabel('Email ✱')&&requiredLabel('Phone (required)')&&!requiredLabel('Website'));
+  assert.equal(cleanLabel('First Name *'),'First Name');
+  assert.ok(learnable({label:'How did you hear about us?',value:'A friend',type:'text'}));
+  assert.ok(!learnable({label:'Email',value:'a@example.invalid',type:'email'}));
+  assert.ok(!learnable({label:'How did you hear about us?',value:'x',type:'text',byMeshJob:true}));
+  assert.equal(sourceFromReferrer('https://www.linkedin.com/jobs/view/1','https://job-boards.greenhouse.io/x/jobs/1'),'LinkedIn');
+  assert.equal(sourceFromReferrer('https://job-boards.greenhouse.io/x','https://job-boards.greenhouse.io/x/jobs/1'),'');
+  assert.equal(sourceFromReferrer('https://careers.example.com/jobs','https://www.example.com/apply'),'');
+  assert.equal(sourceFromReferrer('',''),'');
+});
+
+test('SmartRecruiters and Workable boards list complete snapshots with dates',async()=>{
+  const sr=detectSource('https://jobs.smartrecruiters.com/Example');
+  const listing=await collect(sr,{fetcher:async url=>{
+    assert.match(url,/limit=100&offset=0$/);
+    return Response.json({totalFound:1,content:[{id:'744000000000001',name:'Data Analyst',releasedDate:'2026-11-20T10:00:00.000Z',company:{name:'Example Co'},
+      location:{city:'Austin',region:'TX',country:'us'},typeOfEmployment:{label:'Full-time'}}]});
+  }});
+  assert.equal(listing.items[0].postedAt,'2026-11-20T10:00:00.000Z');assert.deepEqual(listing.items[0].countries,['United States']);
+  assert.equal(listing.items[0].url,'https://jobs.smartrecruiters.com/Example/744000000000001');
+  const wk=detectSource('https://apply.workable.com/example/');
+  const bodies=[];
+  const jobs=await collect(wk,{fetcher:async (url,options)=>{
+    bodies.push(options.body.token??null);
+    return Response.json(options.body.token?{total:2,results:[{shortcode:'BBBBBB22',title:'Designer',state:'published',published:'2026-01-02T00:00:00.000Z',location:{country:'France'}}]}:
+      {total:2,nextPage:'p2',results:[{shortcode:'AAAAAA11',title:'Engineer',state:'published',published:'2026-01-01T00:00:00.000Z',location:{country:'France'}}]});
+  }});
+  assert.deepEqual(bodies,[null,'p2']);assert.equal(jobs.items.length,2);
+  assert.equal(jobs.items[0].postedAt,null);assert.equal(jobs.items[0].ageFloor,'2026-01-02T00:00:00.000Z');
+  const {jobDetails}=await import('../src/sources.js');
+  const detail=await jobDetails(jobs.items[0],wk,async url=>{
+    assert.equal(url,'https://apply.workable.com/api/v2/accounts/example/jobs/AAAAAA11');
+    return Response.json({shortcode:'AAAAAA11',description:'<p>Build APIs.</p>',requirements:'<ul><li>3+ years of experience</li></ul>',benefits:''});
+  });
+  assert.equal(detail.jd,'Build APIs.\n3+ years of experience');
+});
+
+test('aggregated JSON lists cover many employers with listed dates and sponsorship',async()=>{
+  const {boardCandidates}=await import('../src/sources.js');
+  const src={...detectSource('https://github.com/SimplifyJobs/New-Grad-Positions/blob/dev/.github/scripts/listings.json'),name:'SimplifyJobs New Grad'};
+  assert.equal(src.endpoint,'https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/.github/scripts/listings.json');
+  const now=Math.floor(Date.now()/1000);
+  const body=JSON.stringify([
+    {company_name:'Rillet',title:'Software Engineer, New Grad',url:'https://jobs.ashbyhq.com/rillet/13e1e478-6330-47c5-9fb0-d07889111cc2',locations:"['San Francisco, CA', 'NYC']",date_posted:now-3600,active:true,is_visible:true,sponsorship:'Offers Sponsorship'},
+    {company_name:'Old Co',title:'Software Engineer',url:'https://job-boards.greenhouse.io/oldco/jobs/77',locations:['Austin, TX'],date_posted:now-40*86400,active:true,sponsorship:'U.S. Citizenship is Required'},
+    {company_name:'Closed Co',title:'Engineer',url:'https://jobs.lever.co/closed/13e1e478-6330-47c5-9fb0-d07889111cc3',active:false}
+  ]);
+  const {items}=await collect(src,{fetcher:async()=>new Response(body)});
+  assert.equal(items.length,2);
+  assert.equal(items[0].location,'San Francisco, CA · NYC');assert.equal(items[0].sponsorship.status,'Likely');assert.equal(items[0].official,false);
+  assert.equal(freshness({...items[0],active:true,firstSeenAt:new Date().toISOString()},24),'detected');
+  assert.equal(freshness({...items[1],active:true,firstSeenAt:new Date().toISOString()},24),'older');
+  assert.equal(items[1].sponsorship.status,'Not Supported');
+  assert.ok(!preferenceDecision(items[1],{titles:['Software Engineer'],sponsorship:'Required'}).eligible);
+  const urls=boardCandidates('Scale AI');
+  assert.ok(urls.includes('https://jobs.ashbyhq.com/scaleai')&&urls.includes('https://job-boards.greenhouse.io/scale-ai')&&urls.includes('https://jobs.smartrecruiters.com/ScaleAI'));
+  assert.deepEqual(boardCandidates('  '),[]);
+});
+
+test('Hacker News hiring threads list startups with links and listed dates',async()=>{
+  const src=detectSource('https://news.ycombinator.com/whoishiring');
+  assert.equal(src.provider,'hn');assert.equal(src.origin,'https://hn.algolia.com');
+  const now=Math.floor(Date.now()/1000);
+  const thread={id:42,children:[
+    {id:1,created_at_i:now-600,text:'Acme AI | Founding ML Engineer | San Francisco, CA | ONSITE | Full-time, $180k<p>We build agents. Apply: <a href="https:&#x2F;&#x2F;jobs.ashbyhq.com&#x2F;acme-ai">https://jobs.ashbyhq.com/acme-ai</a>'},
+    {id:2,created_at_i:now-600,text:'No link here | Engineer | Remote'},
+    {id:3,created_at_i:now-40*86400,text:'Old Co | Software Engineer | REMOTE (US)<p><a href="https:&#x2F;&#x2F;old.example&#x2F;careers">careers</a>'}
+  ]};
+  const {items}=await collect(src,{fetcher:async url=>url.includes('/items/42')?Response.json(thread):Response.json({hits:[{objectID:'7',title:'Ask HN: Who wants to be hired?'},{objectID:'42',title:'Ask HN: Who is hiring? (November 2026)'}]})});
+  assert.equal(items.length,2);
+  assert.deepEqual([items[0].company,items[0].title,items[0].location,items[0].workMode,items[0].url],['Acme AI','Founding ML Engineer','San Francisco, CA','On-site','https://jobs.ashbyhq.com/acme-ai']);
+  assert.equal(freshness({...items[0],active:true,firstSeenAt:new Date().toISOString()},24),'detected');
+  assert.equal(freshness({...items[1],active:true,firstSeenAt:new Date().toISOString()},24),'older');
+});
+
+test('standard EEO answers map to each form’s wording, including broader race groups',async()=>{
+  const {pickOption,ANSWER_PRESETS,fieldQuestion,createFillPlan}=await import('../src/form-rules.js');
+  const pick=(options,value)=>options[pickOption(options,value)];
+  assert.ok(ANSWER_PRESETS.every(preset=>preset.countries||preset.choices?.length),'every preset uses standard choices');
+  assert.equal(pick(['Asian','White','Black or African American'],'East Asian'),'Asian');
+  assert.equal(pick(['East Asian','South Asian','Asian'],'East Asian'),'East Asian');
+  assert.equal(pick(['Asian (Not Hispanic or Latino)','White (Not Hispanic or Latino)'],'Asian'),'Asian (Not Hispanic or Latino)');
+  assert.equal(pick(['I am not a protected veteran','I identify as one or more of the classifications of protected veteran',"I don't wish to answer"],'No'),'I am not a protected veteran');
+  assert.equal(pick(['Yes, I have a disability','No, I do not have a disability and have not had one in the past','I do not want to answer'],'Prefer not to answer'),'I do not want to answer');
+  assert.equal(pick(['Man','Woman','Non-binary'],'Male'),'Man');
+  assert.equal(pick(['Hispanic/Latino','Not Hispanic/Latino'],'Hispanic or Latino'),'Hispanic/Latino');
+  assert.equal(fieldQuestion('Race/Ethnicity'),fieldQuestion('How would you identify your race?'));
+  assert.equal(fieldQuestion('Veteran Status'),fieldQuestion('Are you a veteran?'));
+  const answers=[{verified:true,scope:'global',type:'any',questionKey:fieldQuestion('How would you identify your race?'),value:'East Asian'}];
+  assert.deepEqual(createFillPlan([{id:'r',label:'Race',type:'select',critical:true}],{answers}).map(row=>row.value),['East Asian']);
+});
+test('single-school forms get the first education entry and an unlisted school becomes Other plus its name',async()=>{
+  const {createFillPlan}=await import('../src/form-rules.js');
+  const profile={email:'a@example.invalid',education:[{school:'Zhejiang University',degree:"Bachelor's",field:'Computer Science',end:'2026-06'}]};
+  const fields=[{id:'s',label:'School',type:'combobox'},{id:'d',label:'Degree',type:'select'},{id:'m',label:'Discipline',type:'select'},
+    {id:'g',label:'Graduation year',type:'text'},{id:'o',label:'If other, please specify',type:'text'}];
+  const first=createFillPlan(fields,{profile});
+  assert.deepEqual(first.map(row=>[row.id,row.value,row.fallback]),[['s','Zhejiang University','Other'],['d',"Bachelor's",undefined],['m','Computer Science',undefined],['g','2026',undefined]]);
+  assert.deepEqual(createFillPlan([fields[4]],{profile,otherSchool:true}).map(row=>row.value),['Zhejiang University']);
 });

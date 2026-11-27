@@ -1,21 +1,28 @@
+import regions from './regions.json' with {type:'json'};
+import { COUNTRY_OPTIONS, normalizeLevels } from './preferences.js';
+
 export const STAGES = ['Saved', 'Preparing', 'Applied', 'OA', 'Interview', 'Offer', 'Rejected', 'Withdrawn', 'Accepted'];
-export const SLOTS = ['08:30', '10:30', '12:30', '14:30', '16:30', '18:30'];
+export const SLOTS = ['09:00'];
 export const PREFERENCES = {
   titles: [], aliases: [], seniority: [], employmentType: [], locations: [], countries: [], workMode: [], freshnessHours: 24,
   sponsorship: 'Unspecified', minimumPay: null, currency: 'USD', period: 'year', industries: [], companies: [],
-  skills: [], excludeCompanies: [], excludeTitles: [], strictUnknown: false
+  skills: [], excludeCompanies: [], excludeTitles: [], maxYears: null, strictUnknown: false
 };
 export const DEFAULTS = {
   mode: 'Active', generation: 0, onboarded: false, preferences: PREFERENCES, profile: {}, slots: SLOTS,
-  searchesPerRound: 3, roundsPerDay: 6, budget: 10, dailyBudget: 2, runBudget: 0.15, autoMatch: true,
-  model: 'claude-haiku-5-5', draftModel: 'claude-haiku-5-5', directAlerts: true, advance: false,
-  gmail: false, markRead: false, gmailDays: 14, jdDays: 30, tombstoneDays: 180
+  searchesPerRound: 3, roundsPerDay: 2, budget: 10, dailyBudget: 2, runBudget: 0.15, autoMatch: true, dailySearch: true,
+  model: 'claude-haiku-5-5', draftModel: 'claude-haiku-5-5', directAlerts: true,
+  gmail: false, mailProvider: 'gmail', markRead: false, gmailDays: 14, jdDays: 30, tombstoneDays: 180
 };
 const TRACKING = /^(utm_\w+|gh_src|lever-source|source|fbclid|gclid|ref_src)$/i;
 const PRIVATE_QUERY = /^(?:access_token|id_token|refresh_token|sessionid|session_id|candidateId|applicationToken|authToken|token)$/i;
 const MEANINGFUL_QUERY = ['gh_jid', 'jobId', 'job_id', 'requisitionId'];
 const DENIED = /(^|\.)(linkedin\.com|jobright\.ai|simplify\.jobs|ycombinator\.com|workatastartup\.com|localhost|local|internal|test)$/i;
 
+export const ATS_ORIGINS = ['https://*.greenhouse.io/*','https://*.ashbyhq.com/*','https://*.lever.co/*','https://*.myworkdayjobs.com/*',
+  'https://*.myworkdaysite.com/*','https://*.smartrecruiters.com/*','https://*.workable.com/*'];
+// Granted at install (manifest host_permissions): job application sites plus the public job lists MeshJob reads.
+export const LIST_ORIGINS = ['https://raw.githubusercontent.com/*','https://hn.algolia.com/*'];
 export const nowISO = () => new Date().toISOString();
 export const trim = value => String(value ?? '').replace(/\s+/g, ' ').trim();
 export const normalized = value => trim(value).normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}]+/gu, ' ').replace(/\s+/g, ' ').trim();
@@ -77,11 +84,37 @@ export function hasJobPath(value) {
   const url = httpUrl(value);
   return !!url && (url.pathname.split('/').filter(Boolean).length >= 2 || MEANINGFUL_QUERY.some(key => url.searchParams.has(key)));
 }
+// New needs strong evidence; old needs any credible earlier timestamp (spec 3.3).
 export function freshness(job, hours = 24, at = Date.now()) {
   const floor = at - hours * 3_600_000;
+  if (job.repost) return 'older';
   if (job.active && job.official && exactDate(job.postedAt)) return Date.parse(job.postedAt) >= floor ? 'verified' : 'older';
-  if (job.active && !job.reopenedAt && job.lastAbsentAt && Date.parse(job.firstSeenAt) >= floor) return 'detected';
+  if (validDate(job.ageFloor) && Date.parse(job.ageFloor) < floor) return 'older';
+  if (validDate(job.firstSeenAt) && Date.parse(job.firstSeenAt) < floor) return 'older';
+  // Absent from the previous complete check, or listed inside the window by an aggregated list.
+  if (job.active && !job.reopenedAt && (job.lastAbsentAt || validDate(job.listedAt) && Date.parse(job.listedAt) >= floor)) return 'detected';
   return 'unknown';
+}
+export const earliest = (...values) => values.filter(validDate).sort((a,b)=>Date.parse(a)-Date.parse(b))[0] ?? null;
+
+const has = (pattern, text) => pattern.test(text);
+export function levelOf(title, jd = '') {
+  const role = ' '+normalized(title)+' ';
+  if (has(/ (?:intern|internship|apprentice|co op|coop) /, role)) return 'Intern';
+  if (has(/ (?:engineering|software|development|data science|machine learning|research) manager | director | head of | vp | vice president | chief /, role)) return 'Manager';
+  if (has(/ (?:senior staff|staff|principal|distinguished|fellow) (?!nurse |accountant |pharmacist |physician |assistant )/, role)) return 'Staff+';
+  if (has(/ (?:senior|sr|lead|iii|iv|3|4) /, role)) return 'Senior';
+  if (has(/ (?:new grad|new graduate|graduate|early career|entry level|entry|junior|jr) /, role) || has(/ associate (?:software|engineer|developer|data|product|ml) /, role)
+    || has(/ (?:engineer|developer|scientist|analyst) (?:i|1) /, role)) return 'Entry';
+  if (has(/ (?:ii|2|mid level|intermediate) /, role)) return 'Mid';
+  const years = minYears(jd);
+  if (years == null) return '';
+  return years <= 1 ? 'Entry' : years <= 4 ? 'Mid' : years <= 7 ? 'Senior' : 'Staff+';
+}
+export function minYears(text) {
+  const found = [...String(text ?? '').slice(0,20000).matchAll(/\b(\d{1,2})\s*\+?\s*(?:(?:-|–|to)\s*\d{1,2}\s*\+?\s*)?(?:years?|yrs?)\b(?:\s+of)?(?:\s+[\w/-]+){0,5}?\s+(?:experience|industry)/gi)]
+    .map(match=>Number(match[1])).filter(value=>value<=20);
+  return found.length ? Math.min(...found) : null;
 }
 
 const ALIASES = [
@@ -100,24 +133,21 @@ const ALIASES = [
   ['speech language pathologist','slp','speech therapist','communication disorders','speech language clinical fellow'],
   ['landscape architect','landscape architecture','landscape designer','public realm design','public realm designer','site planning','park design']
 ];
-const stop = new Set(['a','an','the','of','and','for','to','in','i','ii','iii','junior','senior','lead','staff','principal','entry','level','manager','associate','specialist','engineer','remote']);
 const phrase = (text, word) => (' ' + text + ' ').includes(' ' + word + ' ');
 const conflicts = (wanted, known) => wanted.length && known && !wanted.some(value => {
   const lhs = normalized(value);
   const rhs = normalized(known);
   return phrase(rhs, lhs) || phrase(lhs, rhs);
 });
-export function titleRelevant(title, preferences) {
-  const wanted = preferences.titles.map(normalized).filter(Boolean);
-  if (!wanted.length || !title) return true;
+export function titleMatch(title, preferences) {
+  const wanted = (preferences.titles ?? []).map(normalized).filter(Boolean);
+  if (!wanted.length || !title) return '';
   const role = normalized(title);
-  const expanded = new Set([...wanted, ...preferences.aliases.map(normalized)]);
+  const expanded = new Set([...wanted, ...(preferences.aliases ?? []).map(normalized)]);
   for (const group of ALIASES) if (group.some(alias => wanted.some(value => phrase(value, alias)))) group.forEach(value => expanded.add(value));
-  if ([...expanded].some(value => value && (phrase(role, value) || phrase(value, role)))) return true;
-  const words = role.split(' ').filter(word => word.length > 1 && !stop.has(word));
-  const tokens = new Set([...expanded].flatMap(value => value.split(' ')).filter(word => word.length > 1 && !stop.has(word)));
-  return words.length <= 1 || words.some(word => tokens.has(word));
+  return [...expanded].find(value => value && phrase(role, value)) ?? null;
 }
+export const titleRelevant = (title, preferences) => titleMatch(title, preferences) !== null;
 
 export function sponsorshipEvidence(text, url, userEvidence = []) {
   const evidence = [];
@@ -139,14 +169,40 @@ export function sponsorshipEvidence(text, url, userEvidence = []) {
   return { status, items:[...evidence,...userEvidence].slice(0, 24) };
 }
 
-function experienceBand(value) {
-  const key=normalized(value);
-  if (/^(?:junior|entry|entry level|new grad|early career)$/.test(key)) return 'Entry level';
-  if (/^(?:mid level|mid senior level|senior|staff|principal|lead)$/.test(key)) return 'Mid-Senior level';
-  return value;
-}
 function workplaceBand(value) {
   return normalized(value)==='onsite'?'On-site':value;
+}
+
+const countryAliases=new Map(COUNTRY_OPTIONS.filter(name=>name!=='Georgia').map(name=>[normalized(name),name]));
+for (const [alias,name] of [
+  ['us','United States'],['u s','United States'],['usa','United States'],['u s a','United States'],['united states of america','United States'],
+  ['uk','United Kingdom'],['u k','United Kingdom']
+]) countryAliases.set(alias,name);
+
+const US_CODES=new Set('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR'.split(' '));
+const CA_CODES=new Set('AB BC MB NB NL NS NT NU ON PE QC SK YT'.split(' '));
+const placeCountry=new Map([
+  ...(regions.US??[]).filter(name=>name!=='Georgia').map(name=>[normalized(name),'United States']),
+  ...(regions.CA??[]).map(name=>[normalized(name),'Canada']),
+  ...Object.entries({'United States':'san francisco,new york,new york city,nyc,sf,bay area,sf bay area,silicon valley,seattle,austin,boston,los angeles,chicago,mountain view,palo alto,menlo park,sunnyvale,san jose,santa clara,redwood city,san mateo,south san francisco,foster city,redmond,bellevue,kirkland,denver,boulder,atlanta,pittsburgh,san diego,miami,dallas,houston,philadelphia,portland,salt lake city,raleigh,durham,nashville,detroit,minneapolis,phoenix,irvine,brooklyn,jersey city,arlington,reston,mclean,herndon,washington dc,ann arbor,columbus,st louis,baltimore,cupertino,oakland,berkeley',
+    'United Kingdom':'london,manchester,edinburgh,cambridge uk,bristol,belfast,glasgow',Canada:'toronto,vancouver,montreal,ottawa,waterloo,calgary',
+    Ireland:'dublin',Germany:'berlin,munich,hamburg,frankfurt',France:'paris',Netherlands:'amsterdam',Japan:'tokyo,osaka',India:'bangalore,bengaluru,hyderabad,pune,mumbai,new delhi,delhi,gurgaon,gurugram,chennai,noida',
+    Australia:'sydney,melbourne,brisbane',Israel:'tel aviv',Switzerland:'zurich,geneva',Poland:'warsaw,krakow',Sweden:'stockholm',Spain:'madrid,barcelona',
+    'South Korea':'seoul',China:'beijing,shanghai,shenzhen',Brazil:'sao paulo',Mexico:'mexico city',Singapore:'singapore',Taiwan:'taipei',Portugal:'lisbon',Denmark:'copenhagen'})
+    .flatMap(([country,cities])=>cities.split(',').map(city=>[city,country]))
+]);
+function partCountry(raw) {
+  const part=trim(raw);
+  const code=part.replace(/^remote\s*[-–]?\s*/i,'');
+  if(US_CODES.has(code)) return 'United States';
+  if(CA_CODES.has(code)) return 'Canada';
+  const key=normalized(part).replace(/^(?:remote|hybrid|on site|onsite) /,'').replace(/ (?:remote|hybrid|office|hq|area|metro area)$/,'');
+  return countryAliases.get(key) ?? placeCountry.get(key) ?? null;
+}
+export function countriesFromLocation(location) {
+  const places=String(location??'').split(/\s*(?:[;·|\n]|\s\/\s|\s+or\s+)\s*/).filter(Boolean);
+  const countries=places.map(place=>[...new Set(place.split(/[,()]|\s[-–]\s/).map(partCountry).filter(Boolean))]);
+  return countries.length&&countries.every(matches=>matches.length)?countries.flat():[];
 }
 
 export function preferenceDecision(job, raw = PREFERENCES) {
@@ -157,15 +213,20 @@ export function preferenceDecision(job, raw = PREFERENCES) {
   const unknown = [];
   if (p.excludeTitles.some(value => normalized(value) && phrase(title, normalized(value)))) reasons.push('Excluded title');
   if (p.excludeCompanies.some(value => company && normalized(value) === company)) reasons.push('Excluded company');
-  if (!titleRelevant(job.title, p)) reasons.push('Title does not match');
-  for (const [field, label] of [['seniority','Experience level'],['employmentType','Employment type'],['workMode','Workplace type']]) {
-    const comparable=field==='seniority'?experienceBand:field==='workMode'?workplaceBand:value=>value;
+  const matched = titleMatch(job.title, p);
+  if (matched === null) reasons.push('Title does not match');
+  const levels = normalizeLevels(p.seniority), jobLevel = normalizeLevels(job.seniority)[0];
+  if (levels.length && jobLevel && !levels.includes(jobLevel)) reasons.push('Level does not match');
+  if (levels.length && !jobLevel) unknown.push('Level');
+  for (const [field, label] of [['employmentType','Employment type'],['workMode','Workplace type']]) {
+    const comparable=field==='workMode'?workplaceBand:value=>value;
     if (conflicts(p[field].map(comparable), comparable(job[field]))) reasons.push(label + ' does not match');
     if (p[field].length && !job[field]) unknown.push(label);
   }
+  if (typeof p.maxYears === 'number' && Number.isFinite(p.maxYears) && Number.isFinite(job.minYears) && job.minYears > Number(p.maxYears)) reasons.push('Requires more experience');
   if (p.countries.length) {
-    const countries=job.countries??[];
-    if (!countries.length && !(job.location&&p.countries.some(country=>!conflicts([country],job.location)))) unknown.push('Country');
+    const countries=job.countries?.length?job.countries:countriesFromLocation(job.locationDetails||job.location);
+    if (!countries.length) unknown.push('Country');
     if (countries.length && countries.every(country=>conflicts(p.countries,country))) reasons.push('Country does not match');
   }
   if (p.locations.length && !job.location) unknown.push('Location');
@@ -179,7 +240,7 @@ export function preferenceDecision(job, raw = PREFERENCES) {
     if (job.sponsorship?.status === 'Not Supported') reasons.push('Role excludes sponsorship');
     if (!job.sponsorship || job.sponsorship.status === 'Unknown') unknown.push('Sponsorship');
   }
-  return { eligible: !reasons.length && !(p.strictUnknown && unknown.length), reasons, unknown };
+  return { eligible: !reasons.length && !(p.strictUnknown && unknown.length), reasons, unknown, matched: matched || '' };
 }
 
 export function matchScore({ skills, experience, seniority, domain }) {

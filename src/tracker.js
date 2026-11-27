@@ -1,5 +1,24 @@
 import { db, guarded } from './db.js';
-import { canonicalUrl, httpUrl, JOB_DESCRIPTION_LIMIT, normalized, nowISO, STAGES, trim, uid, validDate } from './domain.js';
+import { canonicalUrl, httpUrl, JOB_DESCRIPTION_LIMIT, levelOf, normalized, nowISO, STAGES, trim, uid, validDate } from './domain.js';
+
+const ATS_HOST=/(?:^|\.)(?:greenhouse\.io|ashbyhq\.com|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|smartrecruiters\.com|workable\.com|icims\.com|jobvite\.com|recruitee\.com|bamboohr\.com)$/;
+const SITES=[['linkedin.com','LinkedIn'],['indeed.com','Indeed'],['joinhandshake.com','Handshake'],['simplify.jobs','Simplify'],['glassdoor.com','Glassdoor'],
+  ['google.com','Google'],['wellfound.com','Wellfound'],['angel.co','Wellfound'],['github.com','GitHub'],['ycombinator.com','Y Combinator'],['workatastartup.com','Y Combinator'],
+  ['builtin.com','Built In'],['welcometothejungle.com','Welcome to the Jungle'],['otta.com','Welcome to the Jungle'],['levels.fyi','Levels.fyi'],['jobright.ai','Jobright'],
+  ['dice.com','Dice'],['ziprecruiter.com','ZipRecruiter'],['monster.com','Monster'],['mail.google.com','Email'],['outlook.live.com','Email'],['hiring.cafe','HiringCafe']];
+export const SOURCE_CHOICES=['LinkedIn','Indeed','Handshake','Simplify','Referral','Company site','Email','Other'];
+export const isAtsHost=host=>ATS_HOST.test(String(host??''));
+// Where the user found the job: a known site name, another external host, or nothing.
+export function sourceFromReferrer(referrer,page) {
+  const from=httpUrl(referrer), at=httpUrl(page);
+  if(!from) return '';
+  const host=from.hostname.replace(/^www\./,'');
+  const site=SITES.find(([domain])=>host===domain||host.endsWith('.'+domain));
+  if(site) return site[1];
+  if(isAtsHost(host)||at&&(host===at.hostname.replace(/^www\./,'')||host.split('.').slice(-2).join('.')===at.hostname.split('.').slice(-2).join('.'))) return '';
+  return host;
+}
+const cleanSource=value=>{const text=trim(value);return !text||isAtsHost(text)||/\.(?:greenhouse\.io|ashbyhq\.com|lever\.co)$/.test(text)?'':text.slice(0,120);};
 import { postingIdentity } from './sources.js';
 
 const submissionProof = new Set(['ats-receipt','email-confirmation','user-confirmed','csv-confirmed']);
@@ -29,7 +48,7 @@ export function describeImport(raw) {
     company:trim(raw.company).slice(0,180), title:trim(raw.title).slice(0,240),
     requisition:trim(raw.requisition ?? raw.job_id).slice(0,120), location:trim(raw.location).slice(0,240),
     roleCategory:trim(raw.roleCategory), seniority:trim(raw.seniority), workMode:trim(raw.workMode),
-    employmentType:trim(raw.employmentType), priority:trim(raw.priority), attribution:trim(raw.attribution ?? raw.source) || (url ? new URL(url).hostname : 'Manual'),
+    employmentType:trim(raw.employmentType), priority:trim(raw.priority), attribution:cleanSource(raw.attribution ?? raw.source),
     provider:identity?.source.provider ?? 'manual', externalId:identity?.externalId ?? trim(raw.externalId)
   };
   if (!job.title || !job.company) throw new Error('Company and job title are required.');
@@ -47,6 +66,10 @@ export function deriveApplication(application, records) {
   for (const e of events) {
     if (e.kind === 'materials') materials = e.materials;
     if (e.kind === 'submission-reset') { appliedAt = null; submission = 'unverified'; }
+    if (e.kind === 'submission-date') {
+      appliedAt = e.submissionDate ?? null;
+      submission = appliedAt ? (submission==='confirmed'?'confirmed':'submitted') : 'unverified';
+    }
     if (submissionProof.has(e.kind)) {
       appliedAt ??= e.at;
       submission = e.kind === 'ats-receipt' || e.kind === 'email-confirmation' ? 'confirmed' : submission === 'confirmed' ? 'confirmed' : 'submitted';
@@ -84,8 +107,8 @@ export async function recordEvent(event) {
   return { event:entry, application:result };
 }
 
-export async function saveApplication(raw, { stage = 'Saved', jobId = '', existingId = '', pageDescription = '' } = {}) {
-  return db.transaction('rw',db.jobs,db.applications,db.events,async () => {
+export async function saveApplication(raw, { stage = 'Saved', jobId = '', existingId = '', pageDescription = '', tracking } = {}) {
+  return db.transaction('rw',db.jobs,db.applications,db.events,db.sources,async () => {
     const input = jobId ? null : describeImport(raw);
     const userDescription = typeof raw?.jobDescription==='string' ? raw.jobDescription.trim().slice(0,JOB_DESCRIPTION_LIMIT) : undefined;
     const capturedDescription = typeof pageDescription==='string' ? pageDescription.trim().slice(0,JOB_DESCRIPTION_LIMIT) : '';
@@ -105,11 +128,24 @@ export async function saveApplication(raw, { stage = 'Saved', jobId = '', existi
           company:input?.company ?? same.company,title:input?.title ?? same.title,location:input?.location ?? same.location,
           url:input?.url ?? same.url,requisition:input?.requisition ?? same.requisition,
           ...(jobDescription!==undefined?{jobDescription}:{}),
-          ...(raw?.source!==undefined||raw?.attribution!==undefined?{source:input.attribution}:{}),
+          ...(raw?.source!==undefined||raw?.attribution!==undefined?{source:input.attribution||same.source}:{}),
           ...(raw?.seniority!==undefined?{seniority:input.seniority}:{}),
           ...(raw?.workMode!==undefined?{workMode:input.workMode}:{}),
           ...(raw?.priority!==undefined?{priority:input.priority}:{})};
         await db.applications.put(edited);
+        if(tracking) {
+          const {stage,submissionDate}=tracking;
+          if(!STAGES.includes(stage)) throw new Error('Choose a valid application stage.');
+          if(submissionDate===null&&stage==='Applied') throw new Error('Choose a different stage to clear the submission date.');
+          if(submissionDate!=null&&!validDate(submissionDate)) throw new Error('Enter a valid submission date.');
+          const date=submissionDate===undefined&&stage==='Applied'&&!same.appliedAt?nowISO():submissionDate;
+          if(date!==undefined&&date!==same.appliedAt) {
+            await recordEvent({id:uid(),applicationId:same.id,kind:'submission-date',submissionDate:date});
+          }
+          if(stage!==same.status) {
+            await recordEvent({id:uid(),applicationId:same.id,kind:'correction',stage});
+          }
+        }
       } else if (capturedDescription && same.jobDescription===undefined) {
         await db.applications.update(same.id,{jobDescription:capturedDescription});
       }
@@ -118,11 +154,13 @@ export async function saveApplication(raw, { stage = 'Saved', jobId = '', existi
     }
     const at = nowISO();
     const similar = normalized(job.company) && (await db.applications.toArray()).some(app => normalized(app.company) === normalized(job.company) && normalized(app.title) === normalized(job.title));
+    const discovered = job.sourceIds?.length ? (await db.table('sources').bulkGet(job.sourceIds)).find(Boolean) : null;
     const application = {
       id:uid(),jobId:job.id,company:input?.company ?? job.company,title:input?.title ?? job.title,
       url:input?.url || job.url,requisition:input?.requisition || job.requisition || job.externalId,
-      location:input?.location || job.location,source:input?.attribution || job.attribution || job.provider,
-      roleCategory:input?.roleCategory || job.roleCategory,seniority:input?.seniority || job.seniority,
+      location:input?.location || job.location,
+      source:input?.attribution || (discovered ? 'MeshJob · '+discovered.name : cleanSource(job.attribution) || 'Company site'),
+      roleCategory:input?.roleCategory || job.roleCategory,seniority:input?.seniority || job.seniority || levelOf(input?.title ?? job.title),
       workMode:input?.workMode || job.workMode,priority:input?.priority || job.priority,employmentType:input?.employmentType || job.employmentType,
       sponsorshipStatus:job.sponsorship?.status,postedAt:job.postedAt,firstSeenAt:job.firstSeenAt,
       jobDescription:userDescription ?? (capturedDescription || job.jd || undefined),
@@ -131,6 +169,24 @@ export async function saveApplication(raw, { stage = 'Saved', jobId = '', existi
     await db.applications.add(application);
     const result = await recordEvent({id:'create:'+application.id,kind:'stage',stage,at,applicationId:application.id});
     return {application:result.application,similar:!!similar};
+  });
+}
+
+export async function deleteApplication(id) {
+  return db.transaction('rw',db.applications,db.events,db.runtime,async()=>{
+    if(!await db.applications.get(id)) return false;
+    const events=()=>db.events.where('applicationId').equals(id);
+    await events().and(event=>!!event.messageId).modify(event=>{
+      delete event.applicationId;
+      delete event.stage;
+      event.kind='email';
+      event.pendingRead=false;
+      event.review=!!event.urgent;
+    });
+    await events().delete();
+    await db.runtime.where('kind').equals('form').and(row=>row.appId===id).delete();
+    await db.applications.delete(id);
+    return true;
   });
 }
 

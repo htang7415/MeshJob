@@ -3,7 +3,7 @@ import { discoveryRank, candidateDetails, monitorSource, retainRecords, sourceFa
 import { canonicalUrl, freshness, localSlot, nowISO, preferenceDecision, publicUrl, uid } from './domain.js';
 import { evaluateCandidate, getClaudePermission, newClaude } from './intelligence.js';
 import { syncMail } from './mail.js';
-import { collect, detectSource, fetchPublic, postingIdentity, respectWorkdayRobots } from './sources.js';
+import { boardCandidates, collect, detectSource, fetchPublic, postingIdentity, respectWorkdayRobots } from './sources.js';
 import { findJob } from './tracker.js';
 
 const ALARM = 'meshjob-schedule';
@@ -112,9 +112,9 @@ export async function testNotification() {
 }
 
 async function directAlert(job,source,config,generation,signal) {
-  if (!config.directAlerts || !config.preferences.titles.length || !job.official || job.identityReview || job.notifiedAt || !job.postedAt ||
-    freshness(job,Math.min(24,config.preferences.freshnessHours)) !== 'verified' ||
-    !preferenceDecision(job,config.preferences).eligible || config.modeChangedAt && job.postedAt < config.modeChangedAt ||
+  if (!config.directAlerts || !config.preferences.titles.length || !job.official || job.identityReview || job.notifiedAt || job.repost ||
+    !['verified','detected'].includes(freshness(job,Math.min(24,config.preferences.freshnessHours))) ||
+    !preferenceDecision(job,config.preferences).eligible || config.modeChangedAt && (job.postedAt||job.firstSeenAt) < config.modeChangedAt ||
     await db.applications.where('jobId').equals(job.id).first()) return;
   await checkMode(generation,signal);
   const id = 'meshjob:job:'+job.id;
@@ -146,6 +146,60 @@ async function queueCandidates(rows,source,config,generation) {
   });
 }
 
+// Aggregated lists reveal which employers hire for the user's roles; suggest their boards (Discover → Suggested boards).
+const BOARD_PROVIDERS=new Set(['greenhouse','ashby','lever','smartrecruiters','workable']);
+// A posting or a board root on a supported ATS identifies the employer's board.
+function boardOf(url) {
+  const identity=postingIdentity(url);
+  if(identity) return BOARD_PROVIDERS.has(identity.source.provider)?identity.source:null;
+  try { const source=detectSource(url); return BOARD_PROVIDERS.has(source.provider)?source:null; } catch { return null; }
+}
+export async function suggestBoards(rows,config,generation) {
+  if(!config.preferences.titles.length) return;
+  const counts=new Map();
+  for(const {job} of rows) {
+    const board=boardOf(job.url);
+    if(!board||!preferenceDecision(job,config.preferences).eligible) continue;
+    const entry=counts.get(board.id)??{source:{...board,name:job.company||board.name},title:job.title,count:0};
+    entry.count++;counts.set(board.id,entry);
+  }
+  const top=[...counts.values()].sort((a,b)=>b.count-a.count).slice(0,40);
+  await guarded(generation,[db.runtime,db.sources],async()=>{
+    let added=0;
+    for(const entry of top) {
+      if(added>=12) break;
+      const id=entry.source.id;
+      if(await db.sources.get(id)||await db.runtime.get('dismissed:'+id)) continue;
+      await db.runtime.put({id:'suggest:'+id,kind:'suggestion',source:entry.source,title:entry.title,count:entry.count,expiresAt:Date.now()+14*86_400_000});
+      added++;
+    }
+  });
+}
+// Resolve company names to public ATS boards by trying their usual board names.
+export async function resolveBoards(names,op) {
+  const run=cancellationSignal(op,null);
+  try {
+    const queue=[...new Set(names.map(name=>String(name).trim()).filter(Boolean))].slice(0,40);
+    const results=[];
+    await Promise.all(Array.from({length:4},async()=>{
+      while(queue.length) {
+        const name=queue.shift();
+        let found=null;
+        for(const url of boardCandidates(name)) {
+          run.signal.throwIfAborted();
+          const source=detectSource(url);
+          if(await db.sources.get(source.id)) {found={...source,existing:true};break;}
+          try {
+            const listing=await collect(source,{fetcher:scopedFetch(null,run.signal,source.origin),signal:run.signal});
+            if(listing.items?.length) {found={...source,name,count:listing.items.length};break;}
+          } catch(error) { if(run.signal.aborted) throw error; }
+        }
+        results.push({name,source:found});
+      }
+    }));
+    return results.sort((a,b)=>names.indexOf(a.name)-names.indexOf(b.name));
+  } finally { run.done(); }
+}
 async function candidateBatch(config,generation,onlySource) {
   const id='run:candidates';
   const lease=await claim(id,'lease',90_000,generation);
@@ -210,7 +264,11 @@ export async function runSource(id,{generation,op,full=false}={}) {
     try {
       await respectWorkdayRobots(source,fetcher,run.signal);
       const result=await monitorSource(source,{generation,signal:run.signal,fetcher,full,
-        onCandidates:async rows=>queueCandidates(rows,source,await settings(),generation)});
+        onCandidates:async rows=>{
+          const latest=await settings();
+          await queueCandidates(rows,source,latest,generation);
+          if(['github','hn'].includes(source.provider)) await suggestBoards(rows,latest,generation);
+        }});
       if(generation==null) await candidateBatch(await settings(),generation,source.id);
       return result;
     } catch(error) {
@@ -260,29 +318,41 @@ export async function searchNow({generation,op}={}) {
   const task = cancellationSignal(op,generation,'search');
   try {
     const config = await settings();
-    if (!config.preferences.titles.length) throw new Error('Add target roles in Profile before searching.');
+    if (!config.preferences.titles.length) throw new Error('Add target job titles in Discover → Preferences before searching.');
     const claude = await claudeFor(config,generation,task.signal);
     if (!claude) throw new Error('Connect Claude in Profile before running a web search.');
     const preferences = Object.fromEntries(['titles','aliases','locations','countries','seniority','employmentType','workMode'].map(key=>[key,config.preferences[key].slice(0,12)]));
     const leads = await claude.searchJobs({...preferences,freshnessHours:config.preferences.freshnessHours});
-    let count=0;
+    // Leads are verified through the employer's own ATS API; unverifiable leads are dropped and new boards are suggested (spec 3.3).
+    let count=0, boards=0;
+    const snapshots=new Map();
     for (const lead of leads) {
       await checkMode(generation,task.signal);
       const identity = postingIdentity(lead.url);
-      const url = publicUrl(lead.url);
-      const officialUrl = canonicalUrl(url.href);
+      if (!identity) continue;
+      const {source}=identity;
+      if (!await db.sources.get(source.id) && !await db.runtime.get('suggest:'+source.id)) {
+        const saved=await guarded(generation,[db.runtime],()=>db.runtime.put({id:'suggest:'+source.id,kind:'suggestion',
+          source:{...source,name:lead.company||source.name},title:lead.title,expiresAt:Date.now()+14*86_400_000}));
+        if (saved!==null) boards++;
+      }
+      if (source.provider==='workday' || !await chrome.permissions.contains({origins:[pattern(source.endpoint)]})) continue;
+      try {
+        if (!snapshots.has(source.id)) snapshots.set(source.id,await collect(source,{fetcher:scopedFetch(generation,task.signal,source.origin)}));
+      } catch (error) { if (task.signal.aborted) throw error; snapshots.set(source.id,{items:[]}); }
+      const item = snapshots.get(source.id).items?.find(row=>row.keys.includes(identity.key));
+      if (!item) continue;
+      const {jd, ...listing} = item;
       const added = await guarded(generation,[db.jobs],async()=>{
-        const existing = await findJob(identity?[identity.key]:[],[officialUrl]);
-        if (existing) return false;
-        const job = {...lead,url:officialUrl,provider:'ai',id:uid(),urls:[officialUrl],keys:identity?[identity.key]:[],
-          externalId:identity?.externalId,firstSeenAt:nowISO(),sourceIds:[],members:{},active:false,official:false,lead:true};
+        if (await findJob(listing.keys,[listing.url])) return false;
+        const job = {...listing,id:uid(),urls:[listing.url],firstSeenAt:nowISO(),sourceIds:[],members:{},active:true,official:true,lead:true,verifiedAt:nowISO()};
         if (!preferenceDecision(job,config.preferences).eligible) return false;
         await db.jobs.add(job);
         return true;
       });
       if (added) count++;
     }
-    return {count};
+    return {count,boards};
   } finally { task.done(); await release('run:search',lock); }
 }
 
@@ -290,7 +360,7 @@ export async function runMail({generation,op}={}) {
   const run = cancellationSignal(op,generation,'gmail');
   const config = await settings();
   try {
-    const ai = config.mailAI ? await claudeFor(config,generation,run.signal) : null;
+    const ai = await claudeFor(config,generation,run.signal);
     return await syncMail({config,generation,signal:run.signal,notify:notifyUrgent,ai});
   } finally { run.done(); }
 }
@@ -363,17 +433,17 @@ export async function tick() {
     const now = Date.now();
     await observeMissedSlots(config,generation,now);
     const ready = (await db.sources.filter(source=>source.enabled && (!source.nextAt || source.nextAt<=now)).toArray())
-      .sort((a,b)=>(a.nextAt??0)-(b.nextAt??0)).slice(0,5);
+      .sort((a,b)=>(a.nextAt??0)-(b.nextAt??0)).slice(0,12);
     const mailHealth = await db.runtime.get('health:gmail');
     const today = localSlot(new Date(),config.slots);
     const mail = config.gmail && (!mailHealth?.nextAt || mailHealth.nextAt<=now) ?
       serviceAttempt('health:gmail',()=>runMail({generation}),generation,300_000) : null;
-    const search = config.preferences.titles.length && today.key && await claimSlot(today.key,generation) ?
+    const search = config.dailySearch && config.preferences.titles.length && today.key && await claimSlot(today.key,generation) ?
       serviceAttempt('health:search',async()=>{
         if (!await claudeFor(config,generation)) return {skipped:'Claude is disabled'};
         return searchNow({generation});
       },generation,300_000) : null;
-    const sourceRuns = Promise.all(Array.from({length:3},async()=>{
+    const sourceRuns = Promise.all(Array.from({length:4},async()=>{
       while (ready.length) {
         const source = ready.shift();
         try { await runSource(source.id,{generation}); } catch { /* Source health is durable. */ }

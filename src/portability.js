@@ -180,18 +180,18 @@ const listSetting=z.array(z.string().max(240)).max(100);
 const cost=z.number().finite().min(0).max(10000);
 const configSchema=z.object({
   preferences:z.object(Object.fromEntries(Object.entries(PREFERENCES).map(([name,value])=>[name,
-    Array.isArray(value)?listSetting.optional():name==='minimumPay'?z.number().nonnegative().nullable().optional():
+    Array.isArray(value)?listSetting.optional():name==='minimumPay'?z.number().nonnegative().nullable().optional():name==='maxYears'?z.number().int().min(0).max(40).nullable().optional():
       typeof value==='boolean'?z.boolean().optional():typeof value==='number'?z.number().int().min(1).max(720).optional():z.string().max(60).optional()
   ]))).optional(),
   profile:z.object({
     ...Object.fromEntries(['givenName','familyName','fullName','preferredName','email','phone','phoneCountry','address1','address2','city','region','postal','country','linkedin','website','github','currentEmployer','currentTitle','summary'].map(key=>[key,z.string().max(12000).optional()])),
     skills:z.array(z.string().max(240)).max(500).optional(),
-    education:z.array(z.object(Object.fromEntries(['school','degree','field','gpa','start','end'].map(key=>[key,z.string().max(500).optional()])))).max(80).optional(),
+    education:z.array(z.object({...Object.fromEntries(['school','degree','field','gpa','start','end'].map(key=>[key,z.string().max(500).optional()])),current:z.boolean().optional()})).max(80).optional(),
     experience:z.array(z.object({...Object.fromEntries(['employer','title','start','end','location','description'].map(key=>[key,z.string().max(12000).optional()])),current:z.boolean().optional()})).max(80).optional()
   }).optional(),
   onboarded:z.boolean().optional(),slots:z.array(z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/)).max(12).optional(),
   searchesPerRound:z.number().int().min(1).max(5).optional(),roundsPerDay:z.number().int().min(0).max(12).optional(),
-  budget:cost.optional(),dailyBudget:cost.optional(),runBudget:cost.optional(),autoMatch:z.boolean().optional(),directAlerts:z.boolean().optional(),
+  budget:cost.optional(),dailyBudget:cost.optional(),runBudget:cost.optional(),autoMatch:z.boolean().optional(),directAlerts:z.boolean().optional(),dailySearch:z.boolean().optional(),
   advance:z.boolean().optional(),model:z.string().max(100).optional(),draftModel:z.string().max(100).optional(),
   gmailDays:z.number().int().min(1).max(45).optional(),gmailFilter:z.string().max(180).optional(),mailAI:z.boolean().optional(),
   jdDays:z.number().int().min(1).max(3650).optional(),tombstoneDays:z.number().int().min(1).max(3650).optional(),
@@ -202,7 +202,7 @@ export const portableConfig = config=>configSchema.parse(config);
 const id=z.string().min(1).max(500);
 const date=z.string().refine(validDate);
 const publicLink=z.string().max(4000).refine(value=>!value||!!httpUrl(value));
-const materialRef=z.object({id:id.optional(),name:z.string().max(254),revision:z.number().int().positive().optional(),hash:z.string().optional()});
+const materialRef=z.object({id:id.optional(),name:z.string().max(254),label:z.string().max(200).optional(),revision:z.number().int().positive().optional(),hash:z.string().optional(),external:z.boolean().optional()});
 const refs=z.object({resume:materialRef.nullable().optional(),cover:materialRef.nullable().optional()});
 const textual=(keys,max=480)=>Object.fromEntries(keys.map(key=>[key,z.string().max(max).nullish()]));
 const dates=keys=>Object.fromEntries(keys.map(key=>[key,date.nullish()]));
@@ -219,14 +219,14 @@ const event=z.object({
   ...textual(['category','subject','excerpt','reverses','signature']),note:z.string().max(24000).optional(),duration:z.number().nonnegative().optional(),
   urgent:z.boolean().optional(),review:z.boolean().optional(),...dates(['acknowledgedAt','resolvedAt','notifiedAt','markedReadAt']),
   deadline:z.object({text:z.string().max(180),timezone:z.string().max(24).nullable()}).nullable().optional(),
-  materials:refs.optional(),dateInferred:z.boolean().optional(),forceStage:z.boolean().optional()
+  materials:refs.optional(),submissionDate:date.nullable().optional(),dateInferred:z.boolean().optional(),forceStage:z.boolean().optional()
 });
 const job=z.object({
   id,keys:z.array(z.string().max(4500)).max(100),urls:z.array(publicLink).max(100),url:publicLink,
   company:z.string().max(240),title:z.string().min(1).max(300),sourceIds:z.array(z.string().max(4500)).max(100),
   countries:listSetting.optional(),
   ...textual(['provider','externalId','requisition','location','locationDetails','workMode','employmentType','seniority','attribution','roleCategory','postingLabel','evidence','jdHash','matchKey'],500),
-  ...dates(['postedAt','updatedAt','lastAbsentAt','closedAt','reopenedAt','notifiedAt','jdAt','jdUpdatedAt']),firstSeenAt:date,
+  ...dates(['postedAt','updatedAt','lastAbsentAt','closedAt','reopenedAt','notifiedAt','jdAt','jdUpdatedAt','ageFloor','listedAt']),firstSeenAt:date,repost:z.boolean().optional(),minYears:z.number().int().min(0).max(40).nullish(),
   active:z.boolean(),official:z.boolean(),manual:z.boolean().optional(),lead:z.boolean().optional(),hidden:z.boolean().optional(),identityReview:z.boolean().optional(),
   jd:z.string().max(JOB_DESCRIPTION_LIMIT).nullish(),members:z.record(z.string(),z.object({active:z.boolean(),key:z.string(),official:z.boolean().optional(),firstSeenAt:date.optional(),lastSeenAt:date.optional()})),
   dateEvidence:z.object({date:z.string(),kind:z.string().optional(),url:publicLink}).optional(),
@@ -245,7 +245,7 @@ const answer=z.object({
 });
 const material=z.object({
   id,name:z.string().max(254),type:z.enum(['resume','cover']),label:z.string().max(200),tags:listSetting,text:z.string().max(150000),
-  hash:z.string().regex(/^[a-f\d]{64}$/),revision:z.number().int().positive(),updatedAt:date
+  hash:z.string().regex(/^[a-f\d]{64}$/),revision:z.number().int().positive(),updatedAt:date,archived:z.boolean().optional(),parentId:id.optional()
 });
 const source=z.object({id:id.optional(),url:publicLink,name:z.string().max(150),provider:z.string().max(40),interval:z.number().int().min(10).max(1440),enabled:z.boolean(),permitted:z.boolean().optional()});
 const manifestSchema=z.object({format:z.literal('MeshJob'),version:z.literal(1),exportedAt:date,checksums:z.record(z.string(),z.string().regex(/^[a-f\d]{64}$/))});
