@@ -47,6 +47,10 @@ export function deriveApplication(application, records) {
   for (const e of events) {
     if (e.kind === 'materials') materials = e.materials;
     if (e.kind === 'submission-reset') { appliedAt = null; submission = 'unverified'; }
+    if (e.kind === 'submission-date') {
+      appliedAt = e.submissionDate ?? null;
+      submission = appliedAt ? (submission==='confirmed'?'confirmed':'submitted') : 'unverified';
+    }
     if (submissionProof.has(e.kind)) {
       appliedAt ??= e.at;
       submission = e.kind === 'ats-receipt' || e.kind === 'email-confirmation' ? 'confirmed' : submission === 'confirmed' ? 'confirmed' : 'submitted';
@@ -84,7 +88,7 @@ export async function recordEvent(event) {
   return { event:entry, application:result };
 }
 
-export async function saveApplication(raw, { stage = 'Saved', jobId = '', existingId = '', pageDescription = '' } = {}) {
+export async function saveApplication(raw, { stage = 'Saved', jobId = '', existingId = '', pageDescription = '', tracking } = {}) {
   return db.transaction('rw',db.jobs,db.applications,db.events,async () => {
     const input = jobId ? null : describeImport(raw);
     const userDescription = typeof raw?.jobDescription==='string' ? raw.jobDescription.trim().slice(0,JOB_DESCRIPTION_LIMIT) : undefined;
@@ -110,6 +114,19 @@ export async function saveApplication(raw, { stage = 'Saved', jobId = '', existi
           ...(raw?.workMode!==undefined?{workMode:input.workMode}:{}),
           ...(raw?.priority!==undefined?{priority:input.priority}:{})};
         await db.applications.put(edited);
+        if(tracking) {
+          const {stage,submissionDate}=tracking;
+          if(!STAGES.includes(stage)) throw new Error('Choose a valid application stage.');
+          if(submissionDate===null&&stage==='Applied') throw new Error('Choose a different stage to clear the submission date.');
+          if(submissionDate!=null&&!validDate(submissionDate)) throw new Error('Enter a valid submission date.');
+          const date=submissionDate===undefined&&stage==='Applied'&&!same.appliedAt?nowISO():submissionDate;
+          if(date!==undefined&&date!==same.appliedAt) {
+            await recordEvent({id:uid(),applicationId:same.id,kind:'submission-date',submissionDate:date});
+          }
+          if(stage!==same.status) {
+            await recordEvent({id:uid(),applicationId:same.id,kind:'correction',stage});
+          }
+        }
       } else if (capturedDescription && same.jobDescription===undefined) {
         await db.applications.update(same.id,{jobDescription:capturedDescription});
       }
@@ -131,6 +148,24 @@ export async function saveApplication(raw, { stage = 'Saved', jobId = '', existi
     await db.applications.add(application);
     const result = await recordEvent({id:'create:'+application.id,kind:'stage',stage,at,applicationId:application.id});
     return {application:result.application,similar:!!similar};
+  });
+}
+
+export async function deleteApplication(id) {
+  return db.transaction('rw',db.applications,db.events,db.runtime,async()=>{
+    if(!await db.applications.get(id)) return false;
+    const events=()=>db.events.where('applicationId').equals(id);
+    await events().and(event=>!!event.messageId).modify(event=>{
+      delete event.applicationId;
+      delete event.stage;
+      event.kind='email';
+      event.pendingRead=false;
+      event.review=!!event.urgent;
+    });
+    await events().delete();
+    await db.runtime.where('kind').equals('form').and(row=>row.appId===id).delete();
+    await db.applications.delete(id);
+    return true;
   });
 }
 

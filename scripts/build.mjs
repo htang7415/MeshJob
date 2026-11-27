@@ -32,7 +32,7 @@ await writeFile(resolve(out,'THIRD_PARTY_NOTICES.txt'),notices.join('\n\n'+('-'.
 const manifest={
   manifest_version:3,name:'MeshJob',version,key,description:'Find jobs early, fill applications accurately, and track your search locally.',
   minimum_chrome_version:'120',permissions:['activeTab','scripting','storage','alarms','notifications','sidePanel'],
-  optional_permissions:['identity'],optional_host_permissions:['https://*/*'],
+  optional_permissions:['identity','webNavigation'],optional_host_permissions:['https://*/*'],
   action:{default_title:'Open MeshJob',default_icon:{16:'icons/icon16.png',32:'icons/icon32.png'}},
   icons:{16:'icons/icon16.png',32:'icons/icon32.png',48:'icons/icon48.png',128:'icons/icon128.png'},
   background:{service_worker:'background.js'},side_panel:{default_path:'panel.html'},

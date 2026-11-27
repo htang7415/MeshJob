@@ -1,4 +1,12 @@
-import { distinctValues, normalized, structuredValue } from './domain.js';
+import { distinctValues, httpUrl, normalized, structuredValue } from './domain.js';
+
+export function greenhouseEmbed(value) {
+  const url=httpUrl(value);
+  if(url?.protocol!=='https:' || url.port || !['job-boards.greenhouse.io','boards.greenhouse.io'].includes(url.hostname) ||
+     url.pathname!=='/embed/job_app') return null;
+  const board=url.searchParams.get('for'), id=url.searchParams.get('token');
+  return /^[a-z0-9_-]{1,100}$/i.test(board??'')&&/^\d{1,20}$/.test(id??'') ? {origin:url.origin,board:board.toLowerCase(),id} : null;
+}
 
 export const PROFILE_KEYS = {
   givenName:'First name',familyName:'Last name',fullName:'Full name',preferredName:'Preferred name',email:'Email',
@@ -48,7 +56,7 @@ const transforms = {
 const rules = [
   ['givenName',/^(?:legal )?(?:first|given|forename) name$|^(?:first|firstname|forename)$/],
   ['familyName',/^(?:legal )?(?:last|family|sur) name$|^surname$|^last$|^lastname$/],
-  ['preferredName',/^(?:preferred|chosen|display) (?:first )?name$/],
+  ['preferredName',/^(?:preferred|chosen|display) (?:(?:first|given) )?name$/],
   ['fullName',/^(?:(?:legal )?full |applicant |your )?name$|^fullname$/],
   ['email',/^(?:(?:primary|contact|personal|login|confirm|re enter) )?e ?mail(?: address)?$/],
   ['phoneCountry',/^(?:phone |telephone |mobile )?country (?:dialing )?code$/],
@@ -88,6 +96,8 @@ export function fieldKey(field) {
   return rules.find(([,r])=>r.test(identifiers))?.[0] ?? null;
 }
 
+export const registrationEmailField=field=>['text','email'].includes(field.type)&&fieldKey(field)==='email';
+
 function rowValue(field, profile) {
   if (!field.group) return null;
   const rows = field.group.kind === 'education' ? profile.education : profile.experience;
@@ -104,16 +114,18 @@ function rowValue(field, profile) {
     if (/^(?:end date|end month|end year|to)$/.test(value)) return 'end';
     return null;
   };
-  if (field.group.kind==='experience' && field.type==='checkbox' &&
-      /^(?:i )?currently work (?:here|in this role|at this company)$|^current (?:job|role|position)$/.test(label)) {
-    return row.current===true?'true':null;
-  }
+  const currentLabel=field.group.kind==='education'
+    ? /^(?:i )?(?:currently study here|am currently enrolled)(?: at this (?:school|university|college))?$/
+    : /^(?:i )?currently work (?:here|in this role|at this company)$|^current (?:job|role|position)$/;
+  if(field.type==='checkbox') return row.current===true&&currentLabel.test(label)?'true':null;
   const time = date(label) ?? date(raw);
   if(time==='end' && row.current===true) return null;
   if (time && row[time]) {
+    if (field.type==='month') return row[time].slice(0,7);
+    if (field.type==='date' && /^\d{4,}-\d{2}$/.test(row[time])) return null;
     if (label.includes('month')) return row[time].slice(5,7);
     if (label.includes('year')) return row[time].slice(0,4);
-    return field.type === 'month' ? row[time].slice(0,7) : row[time];
+    return row[time];
   }
   const key = keys[field.group.kind]?.find(([,pattern])=>pattern.test(label)||pattern.test(raw))?.[0];
   return key ? row[key] : null;
@@ -136,7 +148,7 @@ export function createFillPlan(fields,{profile={},answers=[],job={},materials={}
     if (verified && field.type !== 'file' && !structuredValue(verified.value)) return [{id:field.id,value:verified.value,authority:'verified'}];
     if (critical) return [];
     const workValue=rowValue(field,profile);
-    if (field.type==='checkbox' || field.type==='radio') return workValue==='true' && field.type==='checkbox' && field.group?.kind==='experience'
+    if (field.type==='checkbox' || field.type==='radio') return workValue==='true' && field.type==='checkbox'
       ? [{id:field.id,value:workValue,authority:'profile'}]:[];
     const key = fieldKey(field);
     if(key==='skills') {

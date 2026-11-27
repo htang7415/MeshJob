@@ -1,4 +1,4 @@
-import regions from './regions.json';
+import regions from './regions.json' with {type:'json'};
 
 export const EXPERIENCE_LEVELS=['Internship','Entry level','Associate','Mid-Senior level','Director','Executive'];
 export const EMPLOYMENT_TYPES=['Full-time','Part-time','Contract','Temporary','Internship','Volunteer','Other'];

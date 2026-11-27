@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { db, settings, updateSettings } from '../src/db.js';
 import { nowISO } from '../src/domain.js';
 import { saveSnapshot, sourceFailure } from '../src/discovery.js';
-import { appendEvent, changeStage, saveApplication, undoEvent } from '../src/tracker.js';
+import { appendEvent, changeStage, deleteApplication, saveApplication, undoEvent } from '../src/tracker.js';
 import { applicationCSV, csvPreview, importApplicationCSV, makeBackup, previewBackup, restoreBackup } from '../src/portability.js';
 import { classifyMail, linkMail, mailEvent, syncMail } from '../src/mail.js';
 import { newClaude } from '../src/intelligence.js';
@@ -43,6 +43,32 @@ test('baseline, complete diff, failures, reopening and lifecycle commit gate',as
   assert.equal(await saveSnapshot(source,{items:[]},0),null);
   assert.equal((await db.jobs.get(newJob.id)).active,true);
 });
+test('manual tracking changes survive backups and deletion retains the job and mail deduplication',async()=>{
+  const {application}=await saveApplication(fixtureJob,{stage:'Preparing'});
+  const applicationId=application.id;
+  await appendEvent({id:'mail-proof',kind:'email-confirmation',applicationId,messageId:'mail1',stage:'Applied',at:'2020-01-02T00:00:00Z'});
+  const submissionDate='2020-02-02T00:00:00.000Z';
+  const {application:edited}=await saveApplication({...fixtureJob,notes:'Follow-up scheduled'},{existingId:applicationId,
+    tracking:{stage:'Interview',submissionDate}});
+  assert.equal(edited.status,'Interview');
+  assert.equal(edited.appliedAt,submissionDate);
+  assert.equal(edited.notes,'Follow-up scheduled');
+  const backup=await previewBackup(await makeBackup());
+  assert.ok(backup.records.events.some(event=>event.submissionDate===submissionDate));
+  const {application:cleared}=await saveApplication(fixtureJob,{existingId:applicationId,tracking:{stage:'Saved',submissionDate:null}});
+  assert.equal(cleared.appliedAt,null);
+  assert.equal(cleared.status,'Saved');
+  await db.runtime.add({id:'form-tab:19',kind:'form',appId:applicationId});
+  assert.equal(await deleteApplication(applicationId),true);
+  assert.equal(await deleteApplication(applicationId),false);
+  assert.ok(await db.jobs.get(application.jobId));
+  assert.equal(await db.applications.get(applicationId),undefined);
+  assert.equal(await db.runtime.get('form-tab:19'),undefined);
+  assert.equal(await db.events.where('applicationId').equals(applicationId).count(),0);
+  assert.equal((await db.events.get('mail-proof')).pendingRead,false);
+  assert.ok(await db.events.where('messageId').equals('mail1').first());
+});
+
 test('requisitions deduplicate without merging same-company different roles',async()=>{
   const first=await saveApplication(fixtureJob,{stage:'Preparing'});
   const same=await saveApplication({...fixtureJob,url:fixtureJob.url+'?utm_source=x'});

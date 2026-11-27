@@ -1,5 +1,5 @@
-import { canonicalUrl, distinctValues, JOB_DESCRIPTION_LIMIT, normalized, trim, workdayEmployer, workdayTenant } from './domain.js';
-import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECTORS } from './form-rules.js';
+import { canonicalUrl, distinctValues, httpUrl, JOB_DESCRIPTION_LIMIT, normalized, trim, workdayEmployer, workdayTenant } from './domain.js';
+import { consentField, criticalField, fieldKey, greenhouseEmbed, receiptSignature, RECEIPT_SELECTORS, registrationEmailField } from './form-rules.js';
 
 (() => {
   if (globalThis.meshJobContentInstalled) return;
@@ -38,6 +38,21 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
     if (/(^|\.)(?:myworkdayjobs|myworkdaysite)\.com$/.test(host)) return 'workday';
     return 'generic';
   };
+  function embeddedForm() {
+    const matches=[...doc.querySelectorAll('iframe[src]')].filter(visible)
+      .map(node=>greenhouseEmbed(node.src)).filter(Boolean);
+    return matches.length===1?matches[0]:null;
+  }
+  function databricksJob() {
+    if(!['databricks.com','www.databricks.com'].includes(location.hostname) ||
+       !/^\/company\/careers\/[^/]+\/[^/]+-\d+\/?$/.test(location.pathname)) return {};
+    const locationLine=first('main h1','h1')?.nextElementSibling;
+    const description=first('.rich-text-body');
+    const requisition=[...description?.querySelectorAll(':scope > p')??[]].slice(0,4)
+      .map(node=>trim(node.textContent)).find(value=>/^[A-Z]{2,6}\d{2,}R\d{2,}$/.test(value));
+    return {company:'Databricks',location:trim([...locationLine?.childNodes??[]].find(node=>node.nodeType===Node.TEXT_NODE&&trim(node.textContent))?.textContent),
+      requisition,jd:visible(description)?description.innerText.trim().slice(0,JOB_DESCRIPTION_LIMIT):''};
+  }
   function readJob() {
     let posting;
     function find(value) {
@@ -50,22 +65,26 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
       try { posting ||= find(JSON.parse(tag.textContent)); } catch { /* External markup. */ }
     }
     const provider = providerOf();
+    const custom=databricksJob();
     const host = location.hostname;
     const segments = location.pathname.split('/').filter(Boolean);
-    const title = posting?.title || first('[data-automation-id="jobPostingHeader"]','h1.app-title','.posting-headline h2','.section-wrapper h2','main h1','h1','h2')?.textContent || first('meta[property="og:title"]')?.content || doc.title || '';
+    const metaTitle=first('meta[property="og:title"]')?.content;
+    const mongoListing=['mongodb.com','www.mongodb.com'].includes(host)&&/^\/careers\/jobs\/\d+\/?$/.test(location.pathname);
+    const title = posting?.title || (mongoListing&&metaTitle) ||
+      first('[data-automation-id="jobPostingHeader"]','h1.app-title','.posting-headline h2','.section-wrapper h2','main h1','h1','h2')?.textContent || metaTitle || doc.title || '';
     const siteName = first('meta[property="og:site_name"]')?.content;
     const tenant = workdayTenant(host);
     const logoName = provider==='workday' ? first('[data-automation-id="logoLink"] img[alt]')?.alt.replace(/\s+search for jobs$/i,'') : '';
     const company = provider==='workday' ? [posting?.hiringOrganization?.name,siteName,workdayEmployer(host),logoName].map(trim)
       .find(name=>name && normalized(name)!==normalized(tenant) && !/^(?:workday|logo|careers|search for jobs)$/i.test(name)) :
-      posting?.hiringOrganization?.name || siteName || (provider!=='generic'?segments[0]:'');
+      posting?.hiringOrganization?.name || custom.company || siteName || (provider!=='generic'?segments[0]:'');
     const descriptionHtml = typeof posting?.description==='string' ? posting.description.slice(0,300_000) : '';
     const description = first('[data-automation-id="jobPostingDescription"]');
-    const jd = provider==='workday' && visible(description) ? description.innerText.trim().slice(0,JOB_DESCRIPTION_LIMIT) : '';
+    const jd = provider==='workday' && visible(description) ? description.innerText.trim().slice(0,JOB_DESCRIPTION_LIMIT) : custom.jd??'';
     return {
       url:canonicalUrl(expectedUrl()),provider,title:trim(title).slice(0,240),company:trim(company).slice(0,160),
-      requisition:trim(posting?.identifier?.value || first('[data-automation-id="jobReqId"]')?.textContent).slice(0,120),
-      location:trim(posting?.jobLocation?.address?.addressLocality || first('.location','[data-automation-id="locations"]')?.textContent).slice(0,240),
+      requisition:trim(posting?.identifier?.value || first('[data-automation-id="jobReqId"]')?.textContent || custom.requisition).slice(0,120),
+      location:trim(posting?.jobLocation?.address?.addressLocality || first('.location','[data-automation-id="locations"]')?.textContent || custom.location || (mongoListing&&first('h1 h3')?.textContent)).slice(0,240),
       attribution:host,jd,descriptionHtml
     };
   }
@@ -292,10 +311,21 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
   function getStep() {
     return trim(first('[data-automation-id="pageHeaderTitle"]','[data-automation-id="adventureTitle"]','main h1')?.textContent);
   }
+  function hasChallenge() {
+    return [...doc.querySelectorAll('iframe[src*="captcha"],[data-captcha-challenge],#cf-challenge-running')].some(node=>{
+      if(!visible(node)) return false;
+      if(!(node instanceof HTMLIFrameElement)) return true;
+      const url=httpUrl(node.src);
+      const badge=url && node.closest('.grecaptcha-badge') &&
+        ['www.google.com','www.recaptcha.net','recaptcha.net'].includes(url.hostname) &&
+        /^\/recaptcha\/(?:api2|enterprise)\/anchor$/.test(url.pathname) && url.searchParams.get('size')==='invisible';
+      return !badge;
+    });
+  }
   function blockers() {
     const provider = providerOf();
     const page = normalized(getStep());
-    const challenge = [...doc.querySelectorAll('iframe[src*="captcha"],[data-captcha-challenge],#cf-challenge-running')].some(visible);
+    const challenge = hasChallenge();
     const password = [...doc.querySelectorAll('input[type=password]')].some(visible);
     const registration = password && provider!=='generic' && /\b(?:create account|create an account|registration|register|sign up)\b/.test(page) &&
       !/\b(?:login|sign in to|log in|reset)\b/.test(page);
@@ -325,9 +355,9 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
     try {
       const priority=entry=>['country','phoneCountry'].includes(fieldKey(fields.get(entry.id)?.row??{})) ? -1 : 0;
       for (const entry of message.plan.slice(0,200).sort((a,b)=>priority(a)-priority(b))) {
-        if (cancelled || expectedUrl()!==message.url || message.revision!==revision) break;
+        if (cancelled || expectedUrl()!==message.url || message.revision!==revision || hasChallenge()) break;
         const handle = fields.get(entry.id);
-        if (!handle || !handle.node.isConnected) continue;
+        if (!handle || !handle.node.isConnected || handle.node.matches(':disabled,[aria-disabled=true],[readonly]')) continue;
         const {node,row} = handle;
         if (row.disabled || row.consent || row.type==='password'||(row.critical&&entry.authority!=='verified')) continue;
         if (row.type!=='skill-picker' && valueExists(node,row.type)) {results.push({id:row.id,label:row.label,state:'preserved'});continue;}
@@ -341,7 +371,7 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
       }
       const parsed = scan();
       const unresolved = parsed.filter(row=>row.required&&!row.disabled&&!row.filled);
-      return {results,fields:parsed,unresolved,errors:validationErrors().length,duration:performance.now()-start,cancelled};
+      return {results,fields:parsed,unresolved,errors:validationErrors().length,duration:performance.now()-start,cancelled,challenge:hasChallenge()};
     } finally {busy=false;}
   }
   async function advance(message) {
@@ -381,16 +411,39 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
       return scan();
     } finally {busy=false;}
   }
-  function password(message) {
+  function fillRegistration(message) {
     if (busy || message.url!==expectedUrl() || message.revision!==revision || !blockers().registration || blockers().challenge ||
-      location.protocol!=='https:' || !/^(?:ashby|greenhouse|lever|workday)$/.test(providerOf())) throw new Error('Open a verified registration form before filling a password.');
-    const controls = [...doc.querySelectorAll('input[type=password]')].filter(visible);
-    if (!message.value || !controls.length || controls.length>2 || controls.some(node=>node.value || node.readOnly || !/^(?:new-password)?$/.test(node.autocomplete) ||
-      !/\b(?:new |confirm |verify |re.enter )?password\b/i.test(nativeLabel(node)))) throw new Error('Use the browser password manager on this form.');
-    for (const node of controls) setNative(node,message.value);
-    return {count:controls.length};
+      location.protocol!=='https:' || !/^(?:ashby|greenhouse|lever|workday)$/.test(providerOf())) throw new Error('Open a verified registration form before filling credentials.');
+    const passwords=[...doc.querySelectorAll('input[type=password]')].filter(visible);
+    const form=passwords[0]?.form;
+    if(!passwords.length||passwords.length>2||passwords.some(node=>node.form!==form)) {
+      throw new Error('Use the browser password manager on this form.');
+    }
+    const emails=visibleFields().filter(node=>node instanceof HTMLInputElement&&node.form===form&&
+      registrationEmailField({type:node.type,label:nativeLabel(node),name:node.name,autocomplete:node.autocomplete}));
+    const {email,value}=message;
+    if(emails.length>2) throw new Error('Use the browser password manager on this form.');
+    if(email&&value&&emails.some(node=>node.value&&node.value.toLowerCase()!==email.toLowerCase())) {
+      throw new Error('The registration form has a different email. Review it before filling the saved password.');
+    }
+    const writable=node=>!node.value&&!node.matches(':disabled,[aria-disabled="true"],[readonly]');
+    let count=0;
+    for(const node of emails) {
+      if(email&&writable(node)) {
+        setNative(node,email);
+        if(node.value===email) count++;
+      }
+    }
+    if(value&&passwords.every(node=>(!node.value||node.value===value)&&/^(?:new-password)?$/.test(node.autocomplete)&&/\bpassword\b/i.test(nativeLabel(node)))) {
+      for(const node of passwords) {
+        if(!node.isConnected||!visible(node)||!writable(node)) continue;
+        setNative(node,value);
+        if(node.value===value) count++;
+      }
+    }
+    return {count};
   }
-  function send(payload) { void chrome.runtime.sendMessage({...payload,page:expectedUrl()}).catch(()=>{}); }
+  function send(payload) { if(window!==window.top)return;void chrome.runtime.sendMessage({...payload,page:expectedUrl()}).catch(()=>{}); }
   function inspectReceipt() {
     const proof = receipt();
     if (proof && lastReceipt!==expectedUrl()+' '+proof.signature) {
@@ -427,8 +480,10 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
     const heading=first('[data-automation-id="jobPostingHeader"]','main h1','h1','h2');
     const controls=visibleFields().slice(0,200).map(node=>[fieldId(node),nativeLabel(node),node.required,
       node.matches(':disabled,[aria-disabled=true],[readonly]'),node.checked,node.getAttribute('aria-checked'),
-      node.value?true:!!node.files?.length,node.isContentEditable&&!!trim(node.textContent)]);
-    return JSON.stringify([expectedUrl(),doc.title,trim(heading?.textContent),getStep(),blockers(),receipt(),
+      node.value?true:!!node.files?.length,node.isContentEditable&&!!trim(node.textContent),
+      node.type,node.getAttribute('aria-required'),node.getAttribute('autocomplete'),
+      node.tagName==='SELECT'&&optionsOf(node,'select').slice(0,180)]);
+    return JSON.stringify([expectedUrl(),doc.title,trim(heading?.textContent),getStep(),blockers(),receipt(),embeddedForm(),
       !!first('script[type="application/ld+json"],[data-automation-id="jobPostingDescription"]'),controls]);
   }
   function scheduleView() {
@@ -449,13 +504,19 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
     views.add(port);
     viewObserver.observe(doc.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,
       attributeFilter:['class','style','hidden','inert','aria-hidden','aria-required','aria-disabled','aria-label','aria-checked',
-        'required','disabled','readonly','data-automation-id','data-testid','value']});
+        'required','disabled','readonly','data-automation-id','data-testid','value','src','aria-labelledby','name','type']});
     scheduleView();
     port.onDisconnect.addListener(()=>{
       views.delete(port);
       if(!views.size) viewObserver.disconnect();
     });
   });
+  doc.addEventListener('load',event=>{
+    if(event.target instanceof HTMLIFrameElement && greenhouseEmbed(event.target.src)) {
+      lastView=null;
+      scheduleView();
+    }
+  },true);
   doc.addEventListener('input',scheduleView,true);
   doc.addEventListener('change',scheduleView,true);
   win.addEventListener('pageshow',scheduleView);
@@ -465,18 +526,19 @@ import { consentField, criticalField, fieldKey, receiptSignature, RECEIPT_SELECT
   chrome.runtime.onMessage.addListener((message,sender,respond)=>{
     if (sender.id!==chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('')) || !message?.type?.startsWith('form:')) return false;
     const handle = async ()=>{
+      if (message.type==='form:embedded') return {embedded:embeddedForm(),challenge:hasChallenge()};
       if (message.type==='form:inspect') {
         const rows=scan();
         const page=expectedUrl(), step=getStep();
         const context=JSON.stringify([page,step,rows.map(row=>[row.id,row.label,row.type,row.required,row.disabled,row.critical,row.consent])]);
         if(context!==formContext) {formContext=context;revision=crypto.randomUUID();}
         if(message.watch) lastView=viewStamp();
-        return {job:readJob(),page,revision,fields:rows,step,...blockers(),intent,receipt:receipt()};
+        return {job:window===window.top?readJob():null,page,revision,fields:rows,step,...blockers(),intent,receipt:receipt(),embedded:embeddedForm()};
       }
       if (message.type==='form:fill') return fill(message);
       if (message.type==='form:advance') return advance(message);
       if (message.type==='form:rows') return prepareRows(message);
-      if (message.type==='form:password') return password(message);
+      if (message.type==='form:registration') return fillRegistration(message);
       if (message.type==='form:cancel') {cancelled=true;return true;}
       throw new Error('Unknown form operation.');
     };

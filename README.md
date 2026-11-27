@@ -4,13 +4,13 @@ MeshJob is a local-first Chrome extension for discovering jobs, preparing applic
 
 ## Install
 
-1. Download [MeshJob 1.0.5 (ZIP)](install/MeshJob-1.0.5.zip) and extract it to a permanent folder. Keep this folder in place while using the extension.
+1. Download [MeshJob 1.0.7 (ZIP)](install/MeshJob-1.0.7.zip) and extract it to a permanent folder. Keep this folder in place while using the extension.
 2. In Chrome 120 or later, open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the extracted folder containing `manifest.json`.
-3. Pin MeshJob and click its toolbar icon. In **Discover**, choose **Set up discovery** or add a board in **Manage sources**. Grant the requested origins for the sources you choose.
+3. Pin MeshJob and click its toolbar icon. In **Discover**, choose **Set up discovery** or add a board in **Manage sources**. Grant the requested origins for the sources you choose. Edit your matching criteria in **Discover → Preferences**.
 4. Add personal details, PDFs, and any verified answers in **Profile**. On an application tab, click the toolbar icon, prepare a draft, select your PDFs, and fill available fields. Review the employer’s page and submit it yourself.
 5. Use **Tracker** to follow stages and resolve actions. Use **Search status** in the Dashboard to pause, resume, or finish. Export a backup before uninstalling.
 
-The toolbar opens the Dashboard on general pages and the Side Panel on recognized job URLs. When open, the Side Panel follows the active tab and updates when the application form changes. If it shows **Connect this tab**, click the MeshJob toolbar icon to give it temporary access. Choose **Always scan this site** in the panel to enable automatic scans for future tabs on that site. Chrome manages registration credentials by default.
+The toolbar opens the Dashboard on general pages and the Side Panel on recognized job URLs. When open, the Side Panel follows the active tab and updates when the application form changes. For an embedded Greenhouse application, choose **Allow Greenhouse form** when prompted. Chrome requests Greenhouse access and permission to identify the embedded document. If it shows **Connect this tab**, click the MeshJob toolbar icon to give it temporary access. Choose **Always scan this site** in the panel to enable automatic scans for future tabs on that site. Chrome manages registration credentials by default. In **Profile → Registration credentials**, you can set a separate registration email and an optional password.
 
 ### Update an existing installation
 
@@ -33,7 +33,7 @@ If the listing exposes a job description, **Save draft** keeps a local copy with
 
 1. Open the employer’s application tab and click the MeshJob toolbar icon. Chrome opens the application assistant in its side panel, whose position follows Chrome’s settings.
 2. Choose **Grant page access** if prompted. Sign in or complete any employer challenge in the page, then choose **Scan again**.
-3. Choose **Prepare application**, select your PDFs, then choose **Fill available fields**. With reviewed Workday navigation enabled in Profile, you can also choose **Fill to review**.
+3. Select any PDFs you want to attach and choose **Fill available fields**. MeshJob saves a draft when it can identify the job. If details are missing, use **Prepare application** first. With reviewed Workday navigation enabled in Profile, you can also choose **Fill to review**.
 4. Review the filled and unresolved fields before submitting in the employer’s page. On supported Workday skill pickers, MeshJob selects exact saved entries it can verify.
 
 ## Build and test
@@ -49,7 +49,7 @@ npm test
 Load `dist/` as the unpacked extension. To generate a reproducible ZIP, use a clean output directory and set `MESHJOB_ZIP`. The ZIP has fixed entry timestamps.
 
 ```sh
-MESHJOB_DIST=./dist-release MESHJOB_ZIP=./MeshJob-1.0.5.zip npm run build
+MESHJOB_DIST=./dist-release MESHJOB_ZIP=./MeshJob-1.0.7.zip npm run build
 ```
 
 The end-to-end suite uses isolated Chromium profiles. It intercepts the employer hosts for all fill and submission fixtures. Set `MESHJOB_TEST_ROOT` to a writable scratch directory. Set `PLAYWRIGHT_BROWSERS_PATH` to a reusable browser cache if your environment has one.

@@ -186,7 +186,7 @@ const configSchema=z.object({
   profile:z.object({
     ...Object.fromEntries(['givenName','familyName','fullName','preferredName','email','phone','phoneCountry','address1','address2','city','region','postal','country','linkedin','website','github','currentEmployer','currentTitle','summary'].map(key=>[key,z.string().max(12000).optional()])),
     skills:z.array(z.string().max(240)).max(500).optional(),
-    education:z.array(z.object(Object.fromEntries(['school','degree','field','gpa','start','end'].map(key=>[key,z.string().max(500).optional()])))).max(80).optional(),
+    education:z.array(z.object({...Object.fromEntries(['school','degree','field','gpa','start','end'].map(key=>[key,z.string().max(500).optional()])),current:z.boolean().optional()})).max(80).optional(),
     experience:z.array(z.object({...Object.fromEntries(['employer','title','start','end','location','description'].map(key=>[key,z.string().max(12000).optional()])),current:z.boolean().optional()})).max(80).optional()
   }).optional(),
   onboarded:z.boolean().optional(),slots:z.array(z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/)).max(12).optional(),
@@ -219,7 +219,7 @@ const event=z.object({
   ...textual(['category','subject','excerpt','reverses','signature']),note:z.string().max(24000).optional(),duration:z.number().nonnegative().optional(),
   urgent:z.boolean().optional(),review:z.boolean().optional(),...dates(['acknowledgedAt','resolvedAt','notifiedAt','markedReadAt']),
   deadline:z.object({text:z.string().max(180),timezone:z.string().max(24).nullable()}).nullable().optional(),
-  materials:refs.optional(),dateInferred:z.boolean().optional(),forceStage:z.boolean().optional()
+  materials:refs.optional(),submissionDate:date.nullable().optional(),dateInferred:z.boolean().optional(),forceStage:z.boolean().optional()
 });
 const job=z.object({
   id,keys:z.array(z.string().max(4500)).max(100),urls:z.array(publicLink).max(100),url:publicLink,

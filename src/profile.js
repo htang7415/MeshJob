@@ -1,50 +1,18 @@
 import { db, settings } from './db.js';
-import { distinctValues, list, SLOTS, structuredValue } from './domain.js';
+import { list, SLOTS, structuredValue } from './domain.js';
 import { ANSWER_PRESETS, fieldQuestion, PROFILE_KEYS } from './form-rules.js';
 import { PRICES, PRICE_VERSION } from './intelligence.js';
 import { MAIL_ORIGINS } from './mail.js';
-import { COUNTRY_OPTIONS, EMPLOYMENT_TYPES, EXPERIENCE_LEVELS, regionOptions, WORKPLACE_TYPES } from './preferences.js';
+import { COUNTRY_OPTIONS } from './preferences.js';
 import { removeMaterial, saveAnswer, storeMaterial } from './materials.js';
 import { previewBackup, restoreBackup } from './portability.js';
-import { badge,button,check,dataTable,dateLabel,el,elements,field,formDialog,input,link,money,paragraph,permit,readTokens,rpc,section,select,task,textarea,toast,tokenField } from './ui.js';
+import { badge,button,check,dataTable,dateLabel,el,elements,field,formDialog,input,link,money,paragraph,permit,readTokens,rpc,select,task,textarea,toast,tokenField } from './ui.js';
 
-const stages=['any','text','textarea','select','combobox','radio','checkbox','number','email','url','date'];
 const defaultSelect=(name,material,rows,current)=>field(material,select(name,[['','No default'],...rows.map(row=>[row.id,row.label])],current??''));
 const buildForm=(children,submit,label='Save changes')=>el('form',{class:'stack',autocomplete:'off',onsubmit:task(async event=>{
   event.preventDefault();
   await submit(elements(event.currentTarget));
 })},children,el('div',{class:'actions'},el('button',{class:'button primary',type:'submit'},label)));
-const labels=['Preferences','Personal details','Documents','Verified answers','Integrations','Schedules and budget','Local data'];
-const preferenceLists=['titles','countries','locations','seniority','employmentType','workMode'];
-
-export function readPreferences(values) {
-  return {
-    ...Object.fromEntries(preferenceLists.map(key=>[key,readTokens(values,key)])),
-    sponsorship:values.sponsorship||'Unspecified',
-    ...(values.freshnessHours ? {freshnessHours:Number(values.freshnessHours)} : {})
-  };
-}
-export function preferencesForm(p,compact=false) {
-  const countries=distinctValues(p.countries);
-  const regions=tokenField('locations','Regions or cities',p.locations,{
-    choices:regionOptions(countries),placeholder:'Add a region, state, or city'
-  });
-  const country=tokenField('countries','Countries',countries,{
-    choices:COUNTRY_OPTIONS,custom:false,change:values=>regions.setChoices(regionOptions(values))
-  });
-  return el('div',{class:'stack large preference-fields'},
-    tokenField('titles','Target job titles',p.titles,{placeholder:'Software engineer, Data analyst'}).root,
-    el('div',{class:'form-grid'},country.root,regions.root,
-      tokenField('seniority','Experience level',p.seniority,{choices:EXPERIENCE_LEVELS,custom:false}).root,
-      tokenField('employmentType','Employment type',p.employmentType,{choices:EMPLOYMENT_TYPES,custom:false}).root,
-      tokenField('workMode','Workplace type',p.workMode,{choices:WORKPLACE_TYPES,custom:false}).root,
-      field('Visa sponsorship',select('sponsorship',[['Unspecified','No preference'],'Required','Not required'],p.sponsorship)),
-      !compact&&field('Date posted',select('freshnessHours',[
-        ['24','Past 24 hours'],['168','Past week'],['720','Past month'],
-        ...([24,168,720].includes(p.freshnessHours)?[]:[[String(p.freshnessHours),'Past '+p.freshnessHours+' hours']])
-      ],String(p.freshnessHours))))
-  );
-}
 function factsForm(config) {
   const fields=Object.entries(PROFILE_KEYS).filter(([key])=>key!=='fullName');
   return buildForm([
@@ -70,32 +38,32 @@ function historyDialog(key,index) {
     const profile=(await settings()).profile;
     const rows=profile[key]??[];
     const existing=rows[index]??{};
-    const end=input('end',existing.end??'',{type:'date'});
-    const endField=field('End date',end);
-    const currentRole=key==='experience'&&check('current','I currently work in this role',existing.current===true);
-    if(currentRole) {
-      const current=currentRole.querySelector('input');
-      const sync=()=>{endField.hidden=current.checked;end.disabled=current.checked;};
-      current.addEventListener('change',sync);
-      sync();
-    }
+    const education=key==='education';
+    const dateType=education?'month':'date';
+    const end=input('end',historyDate(existing.end,key),{type:dateType});
+    const endField=field(education?'End month':'End date',end);
+    const currentField=check('current',education?'I currently study here':'I currently work in this role',existing.current===true);
+    currentField.classList.add('wide');
+    const current=currentField.querySelector('input');
+    const sync=()=>{endField.hidden=current.checked;end.disabled=current.checked;};
+    current.addEventListener('change',sync);
+    sync();
     formDialog(index==null?'Add '+key:'Edit '+key,[el('div',{class:'form-grid'},workFields[key].map(([name,label],i)=>{
-      if(name==='end') return [currentRole,endField];
-      const current=existing[name]??'';
-      const control=name==='description'?textarea(name,current,{maxlength:12000}):
-        input(name,current,{type:name==='start'?'date':'text',required:i===0});
+      if(name==='start') return [currentField,field(education?'Start month':label,input('start',historyDate(existing.start,key),{type:dateType}))];
+      if(name==='end') return endField;
+      const value=existing[name]??'';
+      const control=name==='description'?textarea(name,value,{maxlength:12000}):input(name,value,{required:i===0});
       return field(label,control);
     }))],async values=>{
-      if(key==='experience') {
-        values.current=values.current==='1';
-        if(values.current) delete values.end;
-      }
+      values.current=values.current==='1';
+      if(values.current) delete values.end;
       const current=(await settings()).profile[key]??[];
       if(index==null) current.push(values);else current[index]=values;
       await rpc('settings:update',{config:{profile:{[key]:current}}});toast('Profile history saved.');
     });
   })().catch(error=>toast(error.message,true));
 }
+const historyDate=(value,key)=>key==='education'?value?.slice(0,7):value;
 function profileHistory(profile,key) {
   const records=profile[key]??[];
   const drop=index=>formDialog('Remove profile entry',[paragraph('Remove this entry from future autofill plans.')],async()=>{
@@ -107,7 +75,7 @@ function profileHistory(profile,key) {
     el('div',{class:'flex between'},el('h3',{},key==='experience'?'Work experience':'Education'),button('Add '+key,()=>historyDialog(key))),
     records.length?dataTable(['Entry','Dates',''],records.map((row,i)=>[
       [row.employer??row.school,row.title??row.degree].filter(Boolean).join(' · '),
-      [row.start||'Unknown',row.current===true?'Present':row.end||'—'].join(' — '),
+      [historyDate(row.start,key)||'Unknown',row.current===true?'Present':historyDate(row.end,key)||'—'].join(' — '),
       el('div',{class:'actions'},button('Edit',()=>historyDialog(key,i)),button('Remove',()=>drop(i),'danger'))
     ])):paragraph('No '+key+' entries.','meta'));
 }
@@ -160,28 +128,27 @@ function documentsView(config,rows) {
 }
 function answerDialog(answer,preset) {
   const question=preset?.question??answer?.question??'';
-  const answerControl=preset?.countries?tokenField('countries','Answer',answer?.value,{
-    choices:COUNTRY_OPTIONS,custom:false
-  }).root:field('Answer',textarea('value',answer?.value??'',{required:true,maxlength:6000}));
-  const choices=preset?.choices&&select(undefined,[['','Choose a suggestion'],...preset.choices],'',{'aria-label':'Suggested answers'});
-  choices?.addEventListener('change',()=>{
-    if(choices.value)answerControl.querySelector('textarea').value=choices.value;
-    choices.value='';
-  });
+  const value=answer?.value??'';
+  let answerControl;
+  if(preset?.countries) {
+    answerControl=tokenField('countries','Answer',value,{choices:COUNTRY_OPTIONS,custom:false}).root;
+  } else if(preset?.choices) {
+    const options=value&&!preset.choices.includes(value)?[...preset.choices,value]:preset.choices;
+    answerControl=field('Answer',select('value',[['','Choose an answer'],...options],value,{required:true}));
+  } else {
+    answerControl=field('Answer',textarea('value',value,{required:true,maxlength:6000}));
+  }
   formDialog(answer?'Edit verified answer':'Add verified answer',[
-    preset?el('p',{class:'answer-question'},question):field('Exact question',textarea('question',question,{required:true,maxlength:420})),
-    choices&&field('Suggested answers',choices),answerControl,
-    !preset&&el('div',{class:'form-grid'},field('Scope',select('scope',['global','company','role'],answer?.scope??'global')),
-      field('Company or role, if scoped',input('context',answer?.context,{maxlength:240})),
-      field('Form control type',select('type',stages,answer?.type??'any'))),
-    check('verified','I verified this answer for the question shown.',false)
+    preset?el('p',{class:'answer-question'},question):field('Question',textarea('question',question,{required:true,maxlength:420})),
+    answerControl
   ],async values=>{
-    const value=preset?.countries?readTokens(values,'countries').join(', '):values.value;
-    if(structuredValue(value))throw new Error('Enter a plain-text answer.');
-    await saveAnswer({...values,question:preset?question:values.question,value,id:answer?.id,verified:!!values.verified});
-    toast('Verified answer saved.');
+    const response=preset?.countries?readTokens(values,'countries').join(', '):values.value;
+    if(structuredValue(response))throw new Error('Enter a plain-text answer.');
+    await saveAnswer({question:preset?question:values.question,value:response,id:answer?.id});
+    toast('Answer saved.');
   });
 }
+
 function removeAnswer(answer) {
   formDialog('Delete verified answer',[paragraph(answer.question)],async()=>{
     await db.answers.delete(answer.id);toast('Answer deleted.');
@@ -199,7 +166,7 @@ function answersView(answers) {
   });
   const custom=answers.filter(answer=>!displayed.has(answer.id));
   return [
-    el('div',{class:'flex between'},paragraph('Saved answers are optional and require your confirmation.'),button('Add custom answer',()=>answerDialog())),
+    el('div',{class:'flex between'},paragraph('Reuse these answers when an application asks the same question.'),button('Add custom answer',()=>answerDialog())),
     el('h3',{},'Work eligibility and equal employment'),el('ul',{class:'clean-list'},rows),
     custom.length>0&&el('h3',{},'Custom answers'),
     custom.length>0&&el('ul',{class:'clean-list'},custom.map(answer=>el('li',{class:'answer-row'},
@@ -218,11 +185,10 @@ function operation(label,type) {
     error=>{status.textContent=error.message;}).finally(()=>{done=true;action.replaceWith(button('Close',()=>dialog.close(),'primary'));});
 }
 function integrations(config,health) {
-  const indicators={claude:el('span'),password:el('span'),gmail:el('span')};
+  const indicators={claude:el('span'),gmail:el('span')};
   const refresh=async()=>{
     const data=await rpc('integrations:status');
     indicators.claude.replaceChildren(badge(data.claude?'Key stored':'Optional',data.claude?'ok':'muted'));
-    indicators.password.replaceChildren(badge(data.password?(data.persistent?'Local plaintext':'Session only'):'Off',data.password?'warn':'muted'));
     indicators.gmail.replaceChildren(badge(!data.gmailConfigured?'OAuth build needed':config.gmail?'Connected':'Optional',config.gmail?'ok':'muted'));
   };
   void refresh().catch(()=>{});
@@ -239,14 +205,6 @@ function integrations(config,health) {
     await permit(MAIL_ORIGINS,['identity']);
     await rpc('gmail:connect',{modify});toast(modify?'Gmail modify access granted.':'Gmail read-only access granted.');
   });
-  const password=()=>formDialog('Registration password',[
-    field('Password',input('value','',{type:'password',autocomplete:'new-password',required:true,maxlength:256})),
-    paragraph('Chrome Password Manager can create unique credentials. MeshJob can fill this value when you explicitly request it on a verified registration form.'),
-    check('persist','Keep this password in local plaintext between Chrome sessions'),
-    check('consent','I understand the plaintext and password-reuse risks.')
-  ],async values=>{
-    await rpc('secret:password',{value:values.value,persist:!!values.persist,consent:!!values.consent});await refresh();toast('Registration password set.');
-  },'Set password');
   return [
     el('div',{class:'stack'},el('div',{class:'flex between'},el('h3',{},'Claude'),indicators.claude),
       paragraph('Bring your own key for matching, web search, and reviewed autofill suggestions.'),
@@ -273,11 +231,37 @@ function integrations(config,health) {
         check('mailAI','Use Claude to review excerpts of ambiguous urgent messages',config.mailAI??false)),
       async values=>{
         await rpc('settings:update',{config:{gmailDays:Number(values.gmailDays),gmailFilter:values.gmailFilter,mailAI:!!values.mailAI}});toast('Gmail scope saved.');
-      },'Save Gmail settings')),
-    el('div',{class:'stack'},el('div',{class:'flex between'},el('h3',{},'Registration password'),indicators.password),
-      el('div',{class:'actions'},button('Set password',password),button('Clear password',task(async()=>{await rpc('secret:password',{value:''});await refresh();},'Registration password removed.'))))
+      },'Save Gmail settings'))
   ];
 }
+function registrationCredentials(config) {
+  const email=el('p',{class:'meta'}), status=el('span');
+  let savedEmail='';
+  const refresh=async()=>{
+    const data=await rpc('integrations:status');
+    savedEmail=data.registrationEmail;
+    email.textContent=savedEmail||config.profile.email||'No registration email set';
+    status.replaceChildren(badge(data.password?(data.persistent?'Local plaintext':'Session only'):'Off',data.password?'warn':'muted'));
+  };
+  void refresh().catch(()=>{});
+  const edit=()=>formDialog('Edit registration credentials',[
+    field('Registration email',input('email',savedEmail,{type:'email',placeholder:config.profile.email||'name@example.com',maxlength:254}),
+      'Leave blank to use your Profile email.'),
+    field('New password',input('value','',{type:'password',autocomplete:'new-password',maxlength:256}),
+      'Leave blank to keep your saved password.'),
+    check('persist','Keep this password in local plaintext between Chrome sessions'),
+    check('consent','I understand the plaintext and password-reuse risks.')
+  ],async values=>{
+    await rpc('secret:registration',{email:values.email,...(values.value?{value:values.value,persist:!!values.persist,consent:!!values.consent}:{})});
+    await refresh();toast('Registration credentials saved.');
+  },'Save credentials');
+  return el('div',{class:'stack'},
+    el('div',{class:'flex between'},el('div',{},el('strong',{},'Registration email'),email),
+      el('div',{class:'inline-group'},el('strong',{},'Password'),status)),
+    el('div',{class:'actions'},button('Edit credentials',edit),
+      button('Clear password',task(async()=>{await rpc('secret:registration',{value:''});await refresh();},'Registration password removed.'))));
+}
+
 function schedules(config,usage) {
   const models=Object.keys(PRICES);
   const month=new Date().toLocaleDateString('en-CA',{year:'numeric',month:'2-digit'});
@@ -350,12 +334,16 @@ function localData({backup,storageHelp}) {
 }
 export function profileView({config,materials,answers,health,usage},controls) {
   const parts=[
-    buildForm(preferencesForm(config.preferences),async values=>{await rpc('settings:update',{config:{preferences:readPreferences(values)}});toast('Search preferences saved.');},'Save preferences'),
-    [factsForm(config),profileHistory(config.profile,'education'),profileHistory(config.profile,'experience'),skillsForm(config.profile)],
-    documentsView(config,materials),answersView(answers),integrations(config,health),schedules(config,usage),localData(controls)
+    ['1','Personal details',[factsForm(config),profileHistory(config.profile,'education'),profileHistory(config.profile,'experience'),skillsForm(config.profile)]],
+    ['2','Documents',documentsView(config,materials)],
+    ['3','Verified answers',answersView(answers)],
+    ['4','Integrations',integrations(config,health)],
+    ['password','Registration credentials',registrationCredentials(config)],
+    ['5','Schedules and budget',schedules(config,usage)],
+    ['6','Local data',localData(controls)]
   ];
-  return el('div',{},el('header',{class:'page-head'},el('div',{},el('h1',{},'Profile'),paragraph('Manage what MeshJob uses for discovery, autofill, and tracking.'))),
-    el('div',{class:'layout'},el('aside',{class:'sidebar'},el('nav',{class:'profile-nav','aria-label':'Profile sections'},labels.map((label,i)=>
-      el('a',{href:'#profile/'+i,onclick:event=>{event.preventDefault();document.getElementById('profile-'+i)?.scrollIntoView({block:'start'});}},label)))),
-    el('div',{class:'stack large'},parts.map((content,i)=>el('section',{class:'section',id:'profile-'+i,style:'scroll-margin-top:95px'},el('h2',{},labels[i]),content)))));
+  return el('div',{},el('header',{class:'page-head'},el('div',{},el('h1',{},'Profile'),paragraph('Manage your application details, documents, and integrations.'))),
+    el('div',{class:'layout'},el('aside',{class:'sidebar'},el('nav',{class:'profile-nav','aria-label':'Profile sections'},parts.map(([id,label])=>
+      el('a',{href:'#profile/'+id,onclick:event=>{event.preventDefault();document.getElementById('profile-'+id)?.scrollIntoView({block:'start'});}},label)))),
+    el('div',{class:'stack large'},parts.map(([id,label,content])=>el('section',{class:'section',id:'profile-'+id,style:'scroll-margin-top:95px'},el('h2',{},label),content)))));
 }

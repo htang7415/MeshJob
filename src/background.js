@@ -1,6 +1,7 @@
 import { db, guarded, settings, updateSettings } from './db.js';
 import { CATALOG } from './catalog.js';
 import { canonicalUrl, httpUrl, list, nowISO, publicUrl, sponsorshipEvidence, uid } from './domain.js';
+import { greenhouseEmbed } from './form-rules.js';
 import { disconnectMail, getMailToken } from './mail.js';
 import { portableConfig } from './portability.js';
 import { candidateDetails } from './discovery.js';
@@ -56,6 +57,25 @@ async function sendForm(tabId,type,data={},inject=false) {
   if(!result?.ok) throw new Error(result?.error||'Unable to connect to this page.');
   if (type==='inspect' && result.value.page!==tab.url) throw new Error('The tab is opening a different page.');
   if (type!=='advance') await sameTab(tabId,type==='inspect'?tab.url:data.url);
+  return result.value;
+}
+async function embeddedAccess(embedded) {
+  return !!chrome.webNavigation && chrome.permissions.contains({
+    permissions:['webNavigation'],origins:[embedded.origin+'/*']
+  });
+}
+async function embeddedFrame(tabId,embedded) {
+  const frames=await chrome.webNavigation.getAllFrames({tabId});
+  const matches=(frames??[]).filter(frame=>{
+    if(frame.parentFrameId!==0||frame.documentLifecycle!=='active'||frame.errorOccurred) return false;
+    const value=greenhouseEmbed(frame.url);
+    return value?.origin===embedded.origin&&value.board===embedded.board&&value.id===embedded.id;
+  });
+  return matches.length===1?matches[0]:null;
+}
+async function sendEmbedded(tabId,frame,type,data={}) {
+  const result=await chrome.tabs.sendMessage(tabId,{type:'form:'+type,...data,url:frame.url},{documentId:frame.documentId});
+  if(!result?.ok) throw new Error(result?.error||'The embedded application changed. Wait for it to be detected.');
   return result.value;
 }
 function tabState(id) { return db.runtime.get('form-tab:'+id); }
@@ -115,7 +135,9 @@ async function formContext(message,app) {
   if (!state || state.appId!==app.id || state.expiresAt<=Date.now() || state.origin!==httpUrl(tab.url)?.origin) throw new Error('Prepare this application before filling.');
   const original=postingIdentity(state.url);
   const current=postingIdentity(tab.url);
-  if (original && current && original.key!==current.key) throw new Error('The job identity changed.');
+  if (canonicalUrl(state.url)!==canonicalUrl(tab.url) && !(original && current && original.key===current.key)) {
+    throw new Error('The job identity changed.');
+  }
   return state;
 }
 async function materialRefs(ids,result) {
@@ -203,22 +225,28 @@ const handlers={
     if(key) await chrome.storage.local.set({claudeKey:key});else await chrome.storage.local.remove('claudeKey');
     return {connected:!!key};
   },
-  'secret:password':async message=>{
-    const value=String(message.value??'');
-    if(value.length>256) throw new Error('The password is too long.');
+  'secret:registration':async message=>{
+    const email=message.email===undefined?undefined:String(message.email).trim();
+    const value=message.value===undefined?undefined:String(message.value);
+    if(email&&(email.length>254||!(/^[^\s@]+@[^\s@]+$/).test(email))) throw new Error('Enter a valid registration email.');
+    if(value?.length>256) throw new Error('The password is too long.');
     if(value&&message.persist&&!message.consent) throw new Error('Confirm the local plaintext option explicitly.');
-    await chrome.storage.session.remove('conveniencePassword');
-    await chrome.storage.local.remove('conveniencePassword');
     if(value) {
-      await chrome.storage[message.persist?'local':'session'].set({conveniencePassword:value});
+      const target=message.persist?'local':'session';
+      await chrome.storage[target].set({conveniencePassword:value});
+      await chrome.storage[message.persist?'session':'local'].remove('conveniencePassword');
+    } else if(value==='') {
+      await Promise.all([chrome.storage.session.remove('conveniencePassword'),chrome.storage.local.remove('conveniencePassword')]);
     }
-    return {configured:!!value,persistent:!!value&&!!message.persist};
+    if(email) await chrome.storage.local.set({registrationEmail:email});
+    else if(email==='') await chrome.storage.local.remove('registrationEmail');
+    return true;
   },
   'integrations:status':async ()=>{
-    const local=await chrome.storage.local.get(['claudeKey','conveniencePassword']);
+    const local=await chrome.storage.local.get(['claudeKey','conveniencePassword','registrationEmail']);
     const session=await chrome.storage.session.get('conveniencePassword');
     return {claude:!!local.claudeKey,password:!!(local.conveniencePassword||session.conveniencePassword),persistent:!!local.conveniencePassword,
-      gmailConfigured:!!chrome.runtime.getManifest().oauth2};
+      registrationEmail:local.registrationEmail??'',gmailConfigured:!!chrome.runtime.getManifest().oauth2};
   },
   'gmail:connect':async message=>{
     await getMailToken({interactive:true,modify:!!message.modify});
@@ -308,10 +336,30 @@ const handlers={
     const inspection=await sendForm(message.tabId,'inspect',{watch:!!message.watch},true);
     const {descriptionHtml,...job}=inspection.job;
     inspection.job={...job,jd:descriptionHtml?plain(descriptionHtml)||job.jd:job.jd};
+    if(inspection.embedded) {
+      inspection.fields=[];
+      inspection.embedAccess=await embeddedAccess(inspection.embedded);
+      if(inspection.embedAccess) {
+        const frame=await embeddedFrame(message.tabId,inspection.embedded);
+        if(frame) {
+          // A reload between enumeration and injection is handled by the next frame load scan.
+          try {
+            await chrome.scripting.executeScript({target:{tabId:message.tabId,documentIds:[frame.documentId]},files:['content.js']});
+            const form=await sendEmbedded(message.tabId,frame,'inspect',{watch:!!message.watch});
+            if(form.page===frame.url) {
+              const {fields,revision,step,challenge,login,receipt}=form;
+              Object.assign(inspection,{fields,revision,step,challenge:inspection.challenge||challenge,login,registration:false,receipt,
+                formDocumentId:frame.documentId});
+            }
+          } catch { /* Frame is still loading or just navigated. */ }
+        }
+      }
+      await sameTab(message.tabId,inspection.page);
+    }
     const local=await tabState(message.tabId);
     if(local && local.expiresAt>Date.now() && local.origin===httpUrl(inspection.page)?.origin) {
       const identity=postingIdentity(inspection.page), prior=postingIdentity(local.url);
-      if(inspection.page===local.url || identity && prior && identity.key===prior.key) inspection.sessionAppId=local.appId;
+      if(canonicalUrl(inspection.page)===canonicalUrl(local.url) || identity && prior && identity.key===prior.key) inspection.sessionAppId=local.appId;
     }
     return inspection;
   },
@@ -330,7 +378,18 @@ const handlers={
     const app=await db.applications.get(message.applicationId);
     if(!app) throw new Error('Prepare this application first.');
     await formContext(message,app);
-    const result=await sendForm(message.tabId,'fill',{revision:message.revision,url:message.page,plan:message.plan});
+    const data={revision:message.revision,url:message.page,plan:message.plan};
+    let result;
+    if(message.documentId) {
+      const {embedded,challenge}=await sendForm(message.tabId,'embedded',{url:message.page});
+      if(challenge) throw new Error('Complete the verification in the employer tab before filling.');
+      const frame=embedded && await embeddedAccess(embedded) && await embeddedFrame(message.tabId,embedded);
+      if(!frame||frame.documentId!==message.documentId) throw new Error('The embedded application changed. Wait for it to be detected.');
+      result=await sendEmbedded(message.tabId,frame,'fill',data);
+      await sameTab(message.tabId,message.page);
+    } else {
+      result=await sendForm(message.tabId,'fill',data);
+    }
     const materials=await materialRefs(message.materials??{},result);
     await appendEvent({id:uid(),applicationId:app.id,kind:'autofill',duration:result.duration,at:nowISO()});
     if(materials.resume||materials.cover) await appendEvent({id:uid(),applicationId:app.id,kind:'materials',at:nowISO(),
@@ -365,25 +424,26 @@ const handlers={
     await db.runtime.update('form-tab:'+message.tabId,{checkpoint:next.step});
     return next;
   },
-  'form:stop':message=>chrome.tabs.sendMessage(message.tabId,{type:'form:cancel'},{frameId:0}),
-  'form:password':async message=>{
+  'form:stop':message=>chrome.tabs.sendMessage(message.tabId,{type:'form:cancel'},message.documentId?{documentId:message.documentId}:{frameId:0}),
+  'form:registration':async message=>{
     const state=await sameTab(message.tabId,message.page);
     const identity=postingIdentity(state.url);
     if(!identity||httpUrl(state.url)?.protocol!=='https:') throw new Error('This tab is not a verified ATS registration flow.');
     const app=await db.applications.get(message.applicationId);
     if(!app) throw new Error('Prepare this application first.');
     await formContext(message,app);
-    const session=await chrome.storage.session.get('conveniencePassword');
-    const local=session.conveniencePassword?{}:await chrome.storage.local.get('conveniencePassword');
+    const [session,local,config]=await Promise.all([chrome.storage.session.get('conveniencePassword'),
+      chrome.storage.local.get(['conveniencePassword','registrationEmail']),settings()]);
     const value=session.conveniencePassword||local.conveniencePassword;
-    if(!value) throw new Error('Use Chrome Password Manager or set a temporary password in Profile.');
-    return sendForm(message.tabId,'password',{revision:message.revision,url:message.page,value});
+    const email=local.registrationEmail||config.profile.email;
+    if(!email&&!value) throw new Error('Set your registration credentials in Profile.');
+    return sendForm(message.tabId,'registration',{revision:message.revision,url:message.page,value,email});
   },
   'data:clear':async message=>{
     if(message.confirm!=='DELETE') throw new Error('Type DELETE to remove local MeshJob data.');
     await setMode('Finished');
     stopMail();
-    await Promise.all([chrome.storage.local.remove(['claudeKey','conveniencePassword']),chrome.storage.session.remove('conveniencePassword'),disconnectMail(false)]);
+    await Promise.all([chrome.storage.local.remove(['claudeKey','conveniencePassword','registrationEmail']),chrome.storage.session.remove('conveniencePassword'),disconnectMail(false)]);
     await db.transaction('rw',db.tables,async()=>{
       await Promise.all(db.tables.filter(table=>table!==db.settings).map(table=>table.clear()));
       const before=await settings();

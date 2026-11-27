@@ -260,7 +260,7 @@ export async function searchNow({generation,op}={}) {
   const task = cancellationSignal(op,generation,'search');
   try {
     const config = await settings();
-    if (!config.preferences.titles.length) throw new Error('Add target roles in Profile before searching.');
+    if (!config.preferences.titles.length) throw new Error('Add target job titles in Discover → Preferences before searching.');
     const claude = await claudeFor(config,generation,task.signal);
     if (!claude) throw new Error('Connect Claude in Profile before running a web search.');
     const preferences = Object.fromEntries(['titles','aliases','locations','countries','seniority','employmentType','workMode'].map(key=>[key,config.preferences[key].slice(0,12)]));

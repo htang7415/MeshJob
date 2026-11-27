@@ -1,3 +1,5 @@
+import { COUNTRY_OPTIONS } from './preferences.js';
+
 export const STAGES = ['Saved', 'Preparing', 'Applied', 'OA', 'Interview', 'Offer', 'Rejected', 'Withdrawn', 'Accepted'];
 export const SLOTS = ['08:30', '10:30', '12:30', '14:30', '16:30', '18:30'];
 export const PREFERENCES = {
@@ -100,7 +102,6 @@ const ALIASES = [
   ['speech language pathologist','slp','speech therapist','communication disorders','speech language clinical fellow'],
   ['landscape architect','landscape architecture','landscape designer','public realm design','public realm designer','site planning','park design']
 ];
-const stop = new Set(['a','an','the','of','and','for','to','in','i','ii','iii','junior','senior','lead','staff','principal','entry','level','manager','associate','specialist','engineer','remote']);
 const phrase = (text, word) => (' ' + text + ' ').includes(' ' + word + ' ');
 const conflicts = (wanted, known) => wanted.length && known && !wanted.some(value => {
   const lhs = normalized(value);
@@ -113,10 +114,7 @@ export function titleRelevant(title, preferences) {
   const role = normalized(title);
   const expanded = new Set([...wanted, ...preferences.aliases.map(normalized)]);
   for (const group of ALIASES) if (group.some(alias => wanted.some(value => phrase(value, alias)))) group.forEach(value => expanded.add(value));
-  if ([...expanded].some(value => value && (phrase(role, value) || phrase(value, role)))) return true;
-  const words = role.split(' ').filter(word => word.length > 1 && !stop.has(word));
-  const tokens = new Set([...expanded].flatMap(value => value.split(' ')).filter(word => word.length > 1 && !stop.has(word)));
-  return words.length <= 1 || words.some(word => tokens.has(word));
+  return [...expanded].some(value => value && phrase(role, value));
 }
 
 export function sponsorshipEvidence(text, url, userEvidence = []) {
@@ -149,6 +147,18 @@ function workplaceBand(value) {
   return normalized(value)==='onsite'?'On-site':value;
 }
 
+const countryAliases=new Map(COUNTRY_OPTIONS.filter(name=>name!=='Georgia').map(name=>[normalized(name),name]));
+for (const [alias,name] of [
+  ['us','United States'],['u s','United States'],['usa','United States'],['u s a','United States'],['united states of america','United States'],
+  ['uk','United Kingdom'],['u k','United Kingdom']
+]) countryAliases.set(alias,name);
+
+function countriesFromLocation(location) {
+  const places=String(location??'').split(/\s*(?:[;·|\n]|\s\/\s)\s*/).filter(Boolean);
+  const countries=places.map(place=>place.split(/[,()]/).map(part=>countryAliases.get(normalized(part))).filter(Boolean));
+  return countries.every(matches=>matches.length)?countries.flat():[];
+}
+
 export function preferenceDecision(job, raw = PREFERENCES) {
   const p = { ...PREFERENCES, ...raw };
   const title = normalized(job.title);
@@ -164,8 +174,8 @@ export function preferenceDecision(job, raw = PREFERENCES) {
     if (p[field].length && !job[field]) unknown.push(label);
   }
   if (p.countries.length) {
-    const countries=job.countries??[];
-    if (!countries.length && !(job.location&&p.countries.some(country=>!conflicts([country],job.location)))) unknown.push('Country');
+    const countries=job.countries?.length?job.countries:countriesFromLocation(job.locationDetails||job.location);
+    if (!countries.length) unknown.push('Country');
     if (countries.length && countries.every(country=>conflicts(p.countries,country))) reasons.push('Country does not match');
   }
   if (p.locations.length && !job.location) unknown.push('Location');

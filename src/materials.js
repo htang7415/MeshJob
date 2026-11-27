@@ -57,12 +57,12 @@ export async function storeMaterial({file,type,label,tags,text,id,signal}) {
 }
 export async function saveAnswer(raw) {
   const old=raw.id?await db.answers.get(raw.id):null;
-  const scope=['global','company','role'].includes(raw.scope)?raw.scope:'global';
-  const answer={id:old?.id??uid(),question:trim(raw.question).slice(0,420),scope,context:trim(raw.context).slice(0,240),
-    type:trim(raw.type||'any').slice(0,40),value:String(raw.value??'').trim().slice(0,6000),verified:true,
+  const scope=old?.scope??'global';
+  const answer={id:old?.id??uid(),question:trim(raw.question).slice(0,420),scope,context:old?.context??'',
+    type:old?.type??'any',value:String(raw.value??'').trim().slice(0,6000),verified:true,
     revision:(old?.revision??0)+1,updatedAt:nowISO()};
   answer.questionKey=fieldQuestion(answer.question);
-  if (!answer.questionKey||!answer.value||scope!=='global'&&!answer.context||raw.verified!==true) throw new Error('Confirm the answer and enter any scope context.');
+  if (!answer.questionKey||!answer.value) throw new Error('Enter a question and answer.');
   await db.answers.put(answer);
   return answer;
 }

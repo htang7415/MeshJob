@@ -1,18 +1,18 @@
 import { liveQuery } from 'dexie';
 import { db, settings } from './db.js';
-import { freshness, httpUrl, JOB_DESCRIPTION_LIMIT, normalized, preferenceDecision, STAGES, uid } from './domain.js';
+import { distinctValues, freshness, httpUrl, JOB_DESCRIPTION_LIMIT, normalized, preferenceDecision, STAGES, uid } from './domain.js';
 import { detectSource } from './sources.js';
 import { analyze, statsPeriod } from './stats.js';
-import { changeStage, saveApplication, undoEvent } from './tracker.js';
+import { changeStage, deleteApplication, saveApplication, undoEvent } from './tracker.js';
 import { applicationCSV, csvPreview, eventsCSV, importApplicationCSV, jobsCSV, makeBackup, readSources, sourcePack, sourcesCSV } from './portability.js';
-import { blank,badge,button,check,dataTable,dateLabel,download,el,field,formDialog,input,link,paragraph,permit,rpc,section,select,task,textarea,toast } from './ui.js';
-import { preferencesForm, profileView, readPreferences } from './profile.js';
-import { EXPERIENCE_LEVELS, PRIORITIES, WORKPLACE_TYPES } from './preferences.js';
+import { blank,badge,button,check,dataTable,dateLabel,download,el,field,formDialog,input,link,paragraph,permit,readTokens,rpc,section,select,task,textarea,toast,tokenField } from './ui.js';
+import { profileView } from './profile.js';
+import { COUNTRY_OPTIONS, EMPLOYMENT_TYPES, EXPERIENCE_LEVELS, PRIORITIES, regionOptions, WORKPLACE_TYPES } from './preferences.js';
 
 const root=document.querySelector('#app');
 const tabs=['Discover','Tracker','Stats','Profile'];
 const view={query:'',sort:'recent',verifiedOnly:false,includeApplied:false,showHidden:false,
-  trackQuery:'',stage:'',includeResolved:false,trackerMode:'table',month:new Date(),statsRange:'all',filterExpanded:false,limit:70};
+  trackQuery:'',stage:'',includeResolved:false,trackerMode:'table',month:new Date(),statsRange:'all',limit:70};
 let shell,main,nav,modeButton,subscription,routeData,routeKey;
 const selected=()=>tabs.find(title=>title.toLowerCase()===location.hash.slice(1).split('/')[0])??'Discover';
 const detail=()=>location.hash.split('/')[1];
@@ -83,14 +83,15 @@ function updateHeader(config) {
   modeButton.replaceChildren(el('span',{class:'status-dot','aria-hidden':'true'}),'Search '+config.mode.toLowerCase(),el('span',{'aria-hidden':'true'},'⌄'));
 }
 function render(data,force=false) {
+  const setupChanged=routeData?.config.onboarded!==data.config.onboarded;
   routeData=data;
   updateHeader(data.config);
-  if(!force&&main.contains(document.activeElement)&&document.activeElement?.matches('input,textarea,select')) {
+  if(!force&&!setupChanged&&main.contains(document.activeElement)&&document.activeElement?.matches('input,textarea,select')) {
     redrawResults();
     return;
   }
   const tab=selected();
-  if(!force&&!location.hash.startsWith('#profile')&&main.contains(document.activeElement)&&document.activeElement?.matches('button,a')&&document.querySelector('#view-results')) {
+  if(!force&&!setupChanged&&!location.hash.startsWith('#profile')&&main.contains(document.activeElement)&&document.activeElement?.matches('button,a')&&document.querySelector('#view-results')) {
     redrawResults();
     return;
   }
@@ -147,20 +148,57 @@ function storageHelp() {
   ]);
 }
 
-function onboard(data) {
-  const grant=check('catalog','Connect the bundled public company boards',false);
-  formDialog('Set up job discovery',[
-    preferencesForm(data.config.preferences,true),
-    grant,paragraph('You can connect PDFs, Claude, or Gmail any time in Profile. Basic features use your local browser profile.')
-  ],async (values,form)=>{
+const preferenceLists=['titles','countries','locations','seniority','employmentType','workMode'];
+
+function readPreferences(values) {
+  return {
+    ...Object.fromEntries(preferenceLists.map(key=>[key,readTokens(values,key)])),
+    sponsorship:values.sponsorship||'Unspecified',
+    ...(values.freshnessHours ? {freshnessHours:Number(values.freshnessHours)} : {})
+  };
+}
+function preferencesForm(p) {
+  const countries=distinctValues(p.countries);
+  const regions=tokenField('locations','Regions or cities',p.locations,{
+    choices:regionOptions(countries),placeholder:'Add a region, state, or city'
+  });
+  const country=tokenField('countries','Countries',countries,{
+    choices:COUNTRY_OPTIONS,custom:false,change:values=>regions.setChoices(regionOptions(values))
+  });
+  return el('div',{class:'stack large preference-fields'},
+    tokenField('titles','Target job titles',p.titles,{placeholder:'Software engineer, Data analyst'}).root,
+    el('div',{class:'form-grid'},country.root,regions.root,
+      tokenField('seniority','Experience level',p.seniority,{choices:EXPERIENCE_LEVELS,custom:false}).root,
+      tokenField('employmentType','Employment type',p.employmentType,{choices:EMPLOYMENT_TYPES,custom:false}).root,
+      tokenField('workMode','Workplace type',p.workMode,{choices:WORKPLACE_TYPES,custom:false}).root,
+      field('Visa sponsorship',select('sponsorship',[['Unspecified','No preference'],'Required','Not required'],p.sponsorship)),
+      field('Date posted',select('freshnessHours',[
+        ['24','Past 24 hours'],['168','Past week'],['720','Past month'],
+        ...([24,168,720].includes(p.freshnessHours)?[]:[[String(p.freshnessHours),'Past '+p.freshnessHours+' hours']])
+      ],String(p.freshnessHours)),'Includes jobs with unverified posting dates by default.'))
+  );
+}
+function discoveryPreferences(setup=false) {
+  const {config}=routeData;
+  formDialog(setup?'Set up discovery':'Preferences',[
+    preferencesForm(config.preferences),
+    el('div',{class:'discovery-options stack'},
+      check('verifiedOnly','Only show jobs with a verified posting date',view.verifiedOnly),
+      check('applied','Show tracked jobs',view.includeApplied),
+      check('hidden','Show hidden jobs',view.showHidden)),
+    setup&&check('catalog','Add recommended company job boards'),
+    setup&&paragraph('Import public job listings from Greenhouse, Ashby, and Lever.','meta')
+  ],async values=>{
     if(values.catalog) {
       await permit(['https://boards-api.greenhouse.io/*','https://api.ashbyhq.com/*','https://api.lever.co/*']);
       const catalog=(await rpc('sources:catalog')).filter(row=>!row.optional);
       await rpc('sources:add',{entries:catalog});
     }
-    await rpc('settings:update',{config:{onboarded:true,preferences:readPreferences(values)}});
-    toast('Discovery preferences saved.');
-  },'Start discovery');
+    await rpc('settings:update',{config:{...(setup?{onboarded:true}:{}),preferences:readPreferences(values)}});
+    Object.assign(view,{verifiedOnly:!!values.verifiedOnly,includeApplied:!!values.applied,showHidden:!!values.hidden,limit:70});
+    redrawResults();
+    toast('Preferences saved.');
+  },setup?'Start discovery':'Save preferences');
 }
 function discover(data) {
   const {config,sources,runtime}=data;
@@ -176,26 +214,20 @@ function discover(data) {
       button('Refresh',()=>runDialog('Refresh sources','sources:refresh',{},r=>r.checked+' sources checked.'+(r.errors.length?' '+r.errors.length+' need attention.':'')),'primary')
     ]),
     !config.onboarded&&el('div',{class:'notice flex between',style:'margin-bottom:18px'},paragraph('Choose your target roles and public sources. You can change them anytime.'),
-      el('div',{class:'actions'},button('Skip setup',task(()=>rpc('settings:update',{config:{onboarded:true}})),'quiet'),button('Set up discovery',()=>onboard(data),'primary'))),
-    el('div',{class:'layout'},el('aside',{class:'sidebar stack discovery-filters','aria-label':'Discovery filters'},
-      el('h2',{class:'filter-heading'},'Filters'),
-      field('Search',smallSearch('discover-query',view.query,'Role or company',value=>{view.query=value;view.limit=70;redrawResults();})),
-      button('Filters',event=>{
-        view.filterExpanded=!view.filterExpanded;
-        event.currentTarget.setAttribute('aria-expanded',String(view.filterExpanded));
-      },'filter-toggle',{'aria-controls':'discovery-options','aria-expanded':String(view.filterExpanded)}),
-      el('div',{class:'stack filter-options',id:'discovery-options'},
-        field('Sort by',select('discoverSort',[['recent','Most recent'],['match','Best match']],view.sort)),
-        check('verifiedOnly','Verified posting dates only',view.verifiedOnly),
-        check('applied','Show tracked jobs',view.includeApplied),check('hidden','Show hidden jobs',view.showHidden),
-        el('a',{href:'#profile',class:'text-link'},'Edit preferences')),
-      errorSources.length>0&&button(errorSources.length+' source'+(errorSources.length===1?'':'s')+' need attention',()=>sourceDialog(data),'danger'),
-      scheduled&&paragraph(scheduled,'meta'),missed&&paragraph('Missed Claude slots · '+missed.day+' · '+missed.slots.join(', '),'meta')),filtered)
+      el('div',{class:'actions'},button('Skip setup',task(()=>rpc('settings:update',{config:{onboarded:true}})),'quiet'),button('Set up discovery',()=>discoveryPreferences(true),'primary'))),
+    el('div',{class:'stack'},
+      el('div',{class:'toolbar discovery-toolbar'},
+        smallSearch('discover-query',view.query,'Role or company',value=>{view.query=value;view.limit=70;redrawResults();}),
+        select('discoverSort',[['recent','Most recent'],['match','Best match']],view.sort,{'aria-label':'Sort by'}),
+        config.onboarded&&button('Preferences',()=>discoveryPreferences())),
+      errorSources.length>0&&el('div',{},button(errorSources.length+' source'+(errorSources.length===1?'':'s')+' need attention',()=>sourceDialog(data),'danger')),
+      scheduled&&paragraph(scheduled,'meta'),missed&&paragraph('Missed Claude slots · '+missed.day+' · '+missed.slots.join(', '),'meta'),
+      filtered)
   );
 }
 root.addEventListener('change',event=>{
   const target=event.target;
-  const keys={discoverSort:'sort',verifiedOnly:'verifiedOnly',applied:'includeApplied',hidden:'showHidden',trackerStage:'stage',resolved:'includeResolved'};
+  const keys={discoverSort:'sort',trackerStage:'stage',resolved:'includeResolved'};
   const viewKey=keys[target.name];
   if(!viewKey||target.closest('dialog')||selected()==='Profile') return;
   view[viewKey]=target.type==='checkbox'?target.checked:target.value;
@@ -227,12 +259,12 @@ function discoverResults(data) {
   const tracked=new Map(data.apps.map(app=>[app.jobId,app]));
   const active=data.sources.filter(source=>source.enabled).length;
   const subset=jobs.slice(0,view.limit);
+  const hasListings=active>0||data.jobs.length>0;
   return [
     el('div',{class:'results-bar'},el('strong',{},jobs.length.toLocaleString()+' '+(jobs.length===1?'job':'jobs')),el('span',{class:'meta'},active+' active '+(active===1?'source':'sources'))),
     jobs.length?el('ul',{class:'result-list','aria-label':'Discovered jobs'},subset.map(job=>jobRow(job,data.config,tracked.get(job.id)))) :
-      blank(active?'No jobs match these filters':'Connect a job source',active?'Clear temporary filters or check back after a complete source refresh.':'Choose company boards, a supported feed, or import a job you found elsewhere.',
-        active?button('Clear filters',()=>{Object.assign(view,{query:'',sort:'recent',verifiedOnly:false,includeApplied:false,showHidden:false});render(data,true);}):
-          button('Browse sources',()=>sourceDialog(data),'primary')),
+      blank(hasListings?'No matching jobs':'Connect a job source',hasListings?'Try a different search or adjust your preferences.':'Choose company boards, a supported feed, or import a job you found elsewhere.',
+        !hasListings&&button('Browse sources',()=>sourceDialog(data),'primary')),
     jobs.length>subset.length&&el('div',{class:'actions',style:'margin-top:12px'},button('Show '+Math.min(70,jobs.length-subset.length)+' more',()=>{view.limit+=70;redrawResults();}))
   ].filter(Boolean);
 }
@@ -343,7 +375,7 @@ async function catalogDialog() {
   const catalog=await rpc('sources:catalog');
   const known=new Set((await db.sources.toArray()).map(s=>s.id));
   const selected=el('div',{class:'form-grid'},catalog.map((source,i)=>el('div',{},check('board-'+i,source.name,false),el('small',{},source.method))));
-  formDialog('Bundled source catalog',[
+  formDialog('Recommended job sources',[
     paragraph('Select public boards for your search. The RSS and new-grad lists are optional.'),
     button('Select all company boards',()=>{for(const [i,source] of catalog.entries())if(!source.optional&&!known.has(source.id))selected.querySelector('[name=board-'+i+']').checked=true;}),
     selected
@@ -407,7 +439,11 @@ const applicationStatus=app=>el('div',{class:'inline-group'},badge(app.status,st
 function applicationTable(apps,total) {
   return dataTable(['Company','ID','Job title','Experience level','Priority','Location','Applied date','Job URL','Resume','Status','Source'],
     apps.map(app=>[
-      openApplication(app,app.company),app.requisition||'—',openApplication(app),
+      openApplication(app,app.company),app.requisition||'—',el('div',{class:'actions'},
+        openApplication(app),button('Edit',task(async()=>{
+          const job=app.jobDescription===undefined?await db.jobs.get(app.jobId):null;
+          applicationEditor(app,app.jobDescription??job?.jd??'');
+        }),'quiet',{'aria-label':'Edit '+app.title})),
       app.seniority||'—',app.priority?badge(app.priority,app.priority==='High'?'warn':'muted'):'—',
       el('div',{},app.location||app.workMode||'—',app.workMode&&app.location&&app.workMode!==app.location&&el('small',{class:'block'},app.workMode)),
       shortDate(app.appliedAt),app.url?link('Open job',app.url,'text-link'):'—',
@@ -504,7 +540,19 @@ function pickOptional(name,label,options,current) {
   const values=current&&!options.includes(current)?[...options,current]:options;
   return field(label,select(name,[['','Not set'],...values],current??''));
 }
+function confirmDeleteApplication(app) {
+  formDialog('Delete application',[
+    paragraph(app.company+' · '+app.title),
+    paragraph('Delete this application and its Tracker history? The job and saved documents will remain.')
+  ],async()=>{
+    await deleteApplication(app.id);
+    toast('Application deleted.');
+  },'Delete application');
+}
 function applicationEditor(app,description='') {
+  const applied=app?.appliedAt?new Date(app.appliedAt):null;
+  const originalDate=applied?new Date(applied.getTime()-applied.getTimezoneOffset()*60_000).toISOString().slice(0,16):'';
+
   const formFields={};
   for(const [name,value] of Object.entries({company:app?.company,title:app?.title,url:app?.url,requisition:app?.requisition,location:app?.location,source:app?.source})) {
     formFields[name]=input(name,value,{required:['company','title'].includes(name),type:name==='url'?'url':'text'});
@@ -522,15 +570,18 @@ function applicationEditor(app,description='') {
       for(const [key,value] of Object.entries(details)) if(value && formFields[key]&&!formFields[key].value) formFields[key].value=value;
       toast('Job details loaded.');
     })),
-    !app&&field('Current stage',select('stage',STAGES,'Saved')),
-    !app&&field('Actual submission date · optional',input('date','',{type:'datetime-local'})),
+    el('div',{class:'form-grid'},field('Current stage',select('stage',STAGES,app?.status??'Saved')),
+      field('Actual submission date · optional',input('date',originalDate,{type:'datetime-local'}))),
+
     field('Notes',textarea('notes',app?.notes??'')),
     el('details',{},el('summary',{},'Job description'),
       field('Job description · optional',textarea('jobDescription',description,{rows:7,maxlength:JOB_DESCRIPTION_LIMIT,
-        placeholder:'Paste the job description here'})))
+        placeholder:'Paste the job description here'}))),
+    app&&el('div',{class:'actions'},button('Delete application',()=>{dialog.close();confirmDeleteApplication(app);},'danger'))
   ],async values=>{
     if(!app&&!values.jobDescription.trim()) delete values.jobDescription;
-    const result=await saveApplication(values,{existingId:app?.id});
+    const tracking=app?{stage:values.stage,submissionDate:values.date===originalDate?undefined:values.date?new Date(values.date).toISOString():null}:undefined;
+    const result=await saveApplication(values,{existingId:app?.id,tracking});
     if(result.duplicate&&!app){toast('This requisition is already tracked.');dialog.close();showApplication(result.application);return false;}
     if(!app&&values.date) {
       const applied=new Date(values.date).toISOString();

@@ -188,6 +188,30 @@ test('experience and country selectors apply supported evidence and retain unkno
   assert.ok(uncertain.eligible);assert.ok(uncertain.unknown.includes('Country'));
 });
 
+test('target roles use aliases without admitting unrelated one-word overlaps',()=>{
+  const preferences={titles:['Software Engineer','Machine Learning Engineer','AI Engineer'],countries:['United States']};
+  assert.ok(preferenceDecision({title:'Senior Backend Engineer',location:'Mountain View, CA, USA'},preferences).eligible);
+  for (const title of ['Diagnostics Engineer','AI Enablement Lead','Data Scientist']) {
+    assert.ok(!preferenceDecision({title,location:'Mountain View, CA, USA'},preferences).eligible,title);
+  }
+  assert.ok(!preferenceDecision({title:'Backend Engineer',location:'Tokyo, Japan'},preferences).eligible);
+  assert.ok(preferenceDecision({title:'Backend Engineer',location:'Tokyo, Japan; Remote'},preferences).unknown.includes('Country'));
+  assert.ok(preferenceDecision({title:'AI Engineer',location:'Tokyo, Japan; Mountain View, CA, U.S.'},preferences).eligible);
+});
+
+test('current education fills enrollment and month controls without inventing a day',async()=>{
+  const {createFillPlan}=await import('../src/form-rules.js');
+  const group={kind:'education',index:0};
+  const fields=[
+    {id:'current',type:'checkbox',group,label:'I currently study here'},
+    {id:'month',type:'month',group,label:'Start month'},
+    {id:'day',type:'date',group,label:'Start date'},
+    {id:'end',type:'month',group,label:'End date'}
+  ];
+  const plan=createFillPlan(fields,{profile:{education:[{current:true,start:'2024-09',end:'2026-08'}]}});
+  assert.deepEqual(plan.map(({id,value})=>[id,value]),[['current','true'],['month','2024-09']]);
+});
+
 test('stats windows group applications by local submission date',async()=>{
   const {statsPeriod,analyze}=await import('../src/stats.js');
   const local=(m,d)=>new Date(2026,m,d,12).toISOString();

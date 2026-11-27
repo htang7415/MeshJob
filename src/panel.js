@@ -1,6 +1,6 @@
 import { db, settings } from './db.js';
 import { canonicalUrl, httpUrl, normalized, workdayTenant } from './domain.js';
-import { createFillPlan, PROFILE_KEYS } from './form-rules.js';
+import { createFillPlan, PROFILE_KEYS, registrationEmailField } from './form-rules.js';
 import { postingIdentity } from './sources.js';
 import { changeStage, findJob, saveApplication } from './tracker.js';
 import { badge, button, el, field, formDialog, input, paragraph, permit, rpc, section, select, task, toast } from './ui.js';
@@ -8,16 +8,20 @@ import { badge, button, el, field, formDialog, input, paragraph, permit, rpc, se
 const root=document.getElementById('app');
 const state={tab:null,inspection:null,app:null,job:null,related:null,config:null,materials:[],answers:[],selected:{resume:'',cover:''},
   drafting:[],maps:[],coverText:'',result:null,busy:false,cancelled:false,issue:'',loading:true,siteAllowed:false,revision:0};
-let panelWindow, activeTab, watchedTab, watchPort, lastPage;
+let panelWindow, activeTab, watchedTab, lastPage;
+const watchPorts=new Map();
 let scanQueued=false, scanPending=false, autoScanning=false;
 
-const pageRef=()=>({tabId:state.tab.id,page:state.inspection.page,revision:state.inspection.revision,applicationId:state.app?.id});
+const pageRef=()=>({tabId:state.tab.id,page:state.inspection.page,revision:state.inspection.revision,
+  documentId:state.inspection.formDocumentId,applicationId:state.app?.id});
+const requiredOpen=fields=>fields.filter(row=>row.required&&!row.disabled&&!row.filled);
 const panelName = ()=>el('span',{class:'brand'},el('img',{alt:'',src:'icons/icon32.png'}),'MeshJob');
 const refreshDash=()=>rpc('dashboard',{hash:'#tracker'});
 function sameJob(left,right) {
   if(!left||!right) return false;
   const identity=postingIdentity(left);
-  return left===right || !!identity && identity.key===postingIdentity(right)?.key;
+  const canonical=canonicalUrl(left);
+  return !!canonical && canonical===canonicalUrl(right) || !!identity && identity.key===postingIdentity(right)?.key;
 }
 function activeBanner(title,message){
   return el('div',{class:'notice alert stack'},el('h2',{},title),paragraph(message));
@@ -26,20 +30,24 @@ function clearJob() {
   state.app=null;state.result=null;state.related=null;state.job=null;state.maps=[];state.drafting=[];state.coverText='';
   state.selected={resume:'',cover:''};
 }
-function watch(tabId) {
-  if(watchedTab===tabId) return;
-  watchPort?.disconnect();
-  watchPort=null;watchedTab=null;
-  if(tabId==null) return;
-  const port=chrome.tabs.connect(tabId,{name:'meshjob:watch',frameId:0});
-  watchPort=port;watchedTab=tabId;
-  port.onMessage.addListener(message=>{
-    if(port===watchPort&&message.type==='page:changed') scheduleScan();
-  });
-  port.onDisconnect.addListener(()=>{
-    void chrome.runtime.lastError;
-    if(port===watchPort) {watchPort=null;watchedTab=null;}
-  });
+function watch(tabId,documentId) {
+  const targets=tabId==null?[]:[0,...(documentId?[documentId]:[])];
+  for(const [target,port] of watchPorts) {
+    if(watchedTab!==tabId||!targets.includes(target)) {watchPorts.delete(target);port.disconnect();}
+  }
+  watchedTab=tabId;
+  for(const target of targets) {
+    if(watchPorts.has(target)) continue;
+    const port=chrome.tabs.connect(tabId,{name:'meshjob:watch',...(target===0?{frameId:0}:{documentId:target})});
+    watchPorts.set(target,port);
+    port.onMessage.addListener(message=>{
+      if(watchPorts.get(target)===port&&message.type==='page:changed') scheduleScan();
+    });
+    port.onDisconnect.addListener(()=>{
+      void chrome.runtime.lastError;
+      if(watchPorts.get(target)===port) watchPorts.delete(target);
+    });
+  }
 }
 async function scan({keepResult=false}={}) {
   const revision=++state.revision;
@@ -57,7 +65,7 @@ async function scan({keepResult=false}={}) {
     const [found,allowed]=await Promise.all([rpc('form:inspect',{tabId:tab.id,watch:true}),
       chrome.permissions.contains({origins:[address.origin+'/*']})]);
     if(revision!==state.revision)return;
-    watch(tab.id);
+    watch(tab.id,found.formDocumentId);
     const identity=postingIdentity(found.job.url);
     const job=await findJob(identity?[identity.key]:[],[canonicalUrl(found.job.url)]).catch(()=>null);
     const appId=found.sessionAppId || (sameJob(lastPage,found.page)?state.app?.id:null);
@@ -66,8 +74,10 @@ async function scan({keepResult=false}={}) {
     if(revision!==state.revision)return;
     state.inspection=found;
     state.siteAllowed=allowed;
-    if(!keepResult || prior && (prior.page!==found.page || prior.step!==found.step)) {
+    if(!keepResult || prior && (prior.page!==found.page || prior.revision!==found.revision || prior.formDocumentId!==found.formDocumentId)) {
       state.result=null;state.maps=[];state.drafting=[];
+    } else if(state.result) {
+      state.result={...state.result,fields:found.fields,unresolved:requiredOpen(found.fields)};
     }
     lastPage=found.page;
     state.job=job;
@@ -104,35 +114,47 @@ async function grant() {
   await permit([current.origin+'/*']);
   await scan();
 }
+async function allowEmbedded() {
+  const {embedded}=state.inspection;
+  await permit([embedded.origin+'/*'],['webNavigation']);
+  await scan();
+}
 function draftCompany(existing) {
   const found=state.inspection?.job;
   const tenant=workdayTenant(httpUrl(found?.url)?.hostname);
   return [existing?.company,found?.company,state.job?.company]
     .find(name=>name && (!tenant || normalized(name)!==normalized(tenant)))??'';
 }
-function getDraftInputs(existing) {
-  const j=state.job??state.inspection?.job??{};
+function draftJob(existing) {
+  const j=state.job??{};
   const from=state.inspection?.job??{};
   return {
-    company:input('company',draftCompany(existing),{required:true,placeholder:'Enter company name'}),
-    title:input('title',existing?.title??j.title??'',{required:true,autocomplete:'off'}),
-    url:input('url',existing?.url??j.url??from.url??state.tab?.url??'',{type:'url'}),
-    location:input('location',existing?.location??j.location??''),
-    requisition:input('requisition',existing?.requisition??j.requisition??''),
-    attribution:input('attribution',existing?.source??j.attribution??from.attribution??'')
+    company:draftCompany(existing),
+    title:existing?.title||from.title||j.title||'',
+    url:existing?.url||from.url||j.url||state.tab?.url||'',
+    location:existing?.location||from.location||j.location||'',
+    requisition:existing?.requisition||from.requisition||j.requisition||'',
+    attribution:existing?.source||from.attribution||j.attribution||''
   };
 }
 async function prepare() {
   const {inspection,tab,related}=state;
   const recent=(await db.applications.toArray()).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,200);
   if(tab?.id!==activeTab || inspection?.page!==state.inspection?.page) return;
-  const f=getDraftInputs(related);
+  const job=draftJob(related);
+  const f=Object.fromEntries(Object.entries(job).map(([name,value])=>[name,input(name,value,{
+    type:name==='url'?'url':'text',required:['company','title'].includes(name)
+  })]));
   const association=select('existing',[['','Use this job'],...recent.map(row=>[row.id,row.company+' · '+row.title])],related?.id??'');
+  const captured=!!(inspection&&f.company.value&&f.title.value);
+  const details=el('div',{class:'form-grid'},field('Company',f.company),field('Job title',f.title),field('Job URL',f.url),
+    field('Requisition ID',f.requisition),field('Location',f.location),field('Source',f.attribution));
   formDialog('Prepare application',[
     related&&el('div',{class:'notice alert'},'This requisition is already tracked as '+related.status+'.'),
+    captured&&el('div',{class:'stack'},el('strong',{},f.title.value),
+      paragraph([f.company.value,f.location.value,f.requisition.value].filter(Boolean).join(' · '),'meta')),
     recent.length>0&&field('Tracked application',association),
-    el('div',{class:'form-grid'},field('Company',f.company),field('Job title',f.title),field('Job URL',f.url),
-      field('Requisition ID',f.requisition),field('Location',f.location),field('Source',f.attribution)),
+    captured?el('details',{},el('summary',{},'Edit job details'),details):details,
     inspection?.job.jd&&paragraph('Job description detected. A copy can be saved locally with this application.','meta')
   ],async values=>{
     const {existing,...job}=values;
@@ -195,32 +217,52 @@ async function busyWith(fn) {
 async function fillPage({preview=false,rows=false,silent=false}={}) {
     const ref=pageRef();
     const inspection=state.inspection;
-    const app=state.app;
+    let app=state.app;
     let fields=inspection.fields;
     if(rows) fields=await rpc('form:rows',ref);
     if(state.cancelled) return null;
     const needsType=type=>fields.some(row=>row.type==='file'&&!row.filled&&new RegExp(type==='resume'?'resume|résumé|curriculum vitae|\\bcv\\b':'cover letter','i').test(row.label+' '+row.name));
-    const plan=createFillPlan(fields,{profile:state.config.profile,answers:state.answers,job:app,materials:{
+    const job=app??draftJob(state.related);
+    const fillable=inspection.registration?fields.filter(row=>!registrationEmailField(row)):fields;
+    const plan=createFillPlan(fillable,{profile:state.config.profile,answers:state.answers,job,materials:{
       resume:needsType('resume')?await serializedFile('resume'):null,cover:needsType('cover')?await serializedFile('cover'):null,coverText:state.coverText
     },maps:preview?state.maps:[],drafts:preview?state.drafting:[]});
     if(state.cancelled) return null;
     if(!plan.length) {
-      state.result={results:[],fields,unresolved:fields.filter(row=>row.required&&!row.disabled&&!row.filled),errors:0,duration:0};
+      state.result={results:[],fields,unresolved:requiredOpen(fields),errors:0,duration:0};
       if(!silent) toast('No verified values are ready to fill. Review the remaining fields.');
       return state.result;
     }
-    const result=await rpc('form:fill',{...ref,plan,materials:state.selected});
+    if(!app) {
+      const prepared=await rpc('form:prepare',{tabId:ref.tabId,inspection,job,existingId:state.related?.id});
+      if(state.cancelled||activeTab!==ref.tabId||state.inspection?.page!==ref.page) return null;
+      app=prepared.application;
+      state.app=app;
+      state.related=app;
+    }
+    const result=await rpc('form:fill',{...ref,applicationId:app.id,plan,materials:state.selected});
     const saved=await db.applications.get(app.id);
-    if(activeTab!==ref.tabId || state.inspection?.page!==ref.page) return null;
+    if(activeTab!==ref.tabId || state.inspection?.page!==ref.page || state.inspection?.formDocumentId!==ref.documentId) return null;
     state.result=result;
     state.inspection.fields=result.fields;
+    state.inspection.challenge||=result.challenge;
     state.app=saved;
     state.maps=[];state.drafting=[];
-    if(result.cancelled)toast('Autofill stopped. Review changes already made on the page.');
+    if(result.challenge)toast('Autofill paused for verification.');
+    else if(result.cancelled)toast('Autofill stopped. Review changes already made on the page.');
     else if(!silent) toast(result.results.filter(row=>row.state==='filled').length+' fields verified on the page.');
     return result;
 }
-function fillOne(options) {return busyWith(()=>fillPage(options));}
+function fillOne(options) {
+  return busyWith(async()=>{
+    const {tab,inspection}=state;
+    await scan({keepResult:true});
+    if(state.cancelled||activeTab!==tab.id||!sameJob(inspection.page,state.inspection?.page)) return;
+    if(state.inspection.challenge||state.inspection.login||state.inspection.receipt) return;
+    if(!state.inspection.fields.length) throw new Error('Open the application form to continue.');
+    return fillPage(options);
+  });
+}
 function fillToReview() {
   return busyWith(async()=>{
     for(let stepIndex=0;stepIndex<8&&!state.cancelled;stepIndex++) {
@@ -231,7 +273,7 @@ function fillToReview() {
         form.challenge||form.login||form.registration||form.receipt) break;
       const rows=/^My Experience$/i.test(form.step)&&!!(state.config.profile.education?.length||state.config.profile.experience?.length);
       const result=await fillPage({rows,silent:true});
-      if(state.cancelled||result?.cancelled||!result||result.unresolved.length||result.errors||
+      if(state.cancelled||result?.cancelled||!result||result.challenge||result.unresolved.length||result.errors||
         result.fields.some(field=>!field.disabled&&(field.consent||field.critical&&!field.filled))) break;
       const next=await rpc('form:advance',pageRef());
       if(next.errors||!next.changed) break;
@@ -242,7 +284,7 @@ function fillToReview() {
 }
 async function stopFill() {
   state.cancelled=true;
-  await rpc('form:stop',{tabId:state.tab.id});
+  await rpc('form:stop',{tabId:state.tab.id,documentId:state.inspection?.formDocumentId});
 }
 async function suggest(draft) {
   await busyWith(async()=>{
@@ -280,31 +322,42 @@ function resultView(result) {
     paragraph('Review the employer form and submit it yourself.','meta'));
 }
 function applicationView(inspection) {
-  const {step,fields,challenge,login,registration,receipt}=inspection;
+  const {step,fields,challenge,login,registration,receipt,embedded,embedAccess}=inspection;
   const workday=inspection.job.provider==='workday';
   const prepareRows=workday&&normalized(step)==='my experience'&&!!(state.config.profile.experience?.length||state.config.profile.education?.length);
   const title=state.app?.title||state.job?.title||inspection.job.title||'Application assistant';
   const company=draftCompany(state.app??state.related);
+  const canStart=!!state.app||!!(company&&inspection.job.title&&fields.length&&!registration);
+  const showMaterials=!!state.app||canStart;
   return [
     el('div',{class:'stack',style:'gap:5px'},el('h1',{},title),company&&paragraph(company),
-      el('div',{class:'inline-group'},badge(inspection.job.provider==='generic'?'Generic form':inspection.job.provider),
+      el('div',{class:'inline-group'},badge(embedded?'Greenhouse':inspection.job.provider==='generic'?'Generic form':inspection.job.provider),
         state.app&&badge(state.app.status,'ok'),step&&step!==title&&badge(step)),
       !state.siteAllowed&&el('div',{},button('Always scan this site',task(grant),'quiet'))),
-    challenge&&activeBanner('Page challenge','Complete the challenge in the employer tab, then scan again.'),
-    login&&activeBanner('Sign-in required','Sign in on the employer page using Chrome Password Manager, then scan again.'),
+    challenge&&activeBanner('Verification required','Complete the verification on the employer page, then continue filling.'),
+    login&&activeBanner('Sign-in required','Sign in on the employer page using Chrome Password Manager.'),
     registration&&activeBanner('Registration form','Review credentials and create the account yourself.'),
-    !state.app&&section('Track this application',paragraph('Save a draft to start autofill on this page.'),
+    !canStart&&section('Track this application',paragraph('Prepare a draft to track this application.'),
       state.related&&badge('Already tracked · '+state.related.status,'warn'),
       button('Prepare application',task(prepare),'primary')),
-    state.app&&section('Application materials',filePicker('resume','Resume PDF'),filePicker('cover','Cover letter PDF'),
-      reference('cover')?.text&&button(state.coverText?'Review approved cover letter text':'Review cover letter text',coverPreview,'quiet')),
-    state.app&&section('Autofill',
-      el('div',{class:'inline-group'},badge(fields.length+' controls'),badge(fields.filter(row=>row.required&&!row.filled&&!row.disabled).length+' required open','warn')),
-      fields.length===0&&paragraph('Open the application form. MeshJob will scan once the fields appear. Embedded forms may need their own tab.','meta'),
-      el('div',{class:'actions'},button('Fill available fields',task(()=>fillOne()),'primary',{disabled:state.busy||!fields.length||challenge||login||!!receipt}),
-        prepareRows&&button('Add missing rows and fill',task(()=>fillOne({rows:true})),'',{disabled:state.busy||challenge}),
-        registration&&button('Fill saved password',task(async()=>{const r=await rpc('form:password',pageRef());toast(r.count+' password controls filled.');}),'',{disabled:state.busy}),
+    (state.app||fields.length>0||embedded)&&section('Autofill',
+      fields.length>0&&el('div',{class:'inline-group','aria-live':'polite'},badge(fields.length+' fields detected'),
+        badge(requiredOpen(fields).length+' required open','warn')),
+      embedded&&!embedAccess?el('div',{class:'stack'},
+        paragraph('This application form is hosted by Greenhouse. Allow access so MeshJob can detect its fields as they change.','meta'),
+        el('div',{},button('Allow Greenhouse form',task(allowEmbedded),'primary'))):
+        fields.length===0&&paragraph(embedded?'Waiting for the Greenhouse form to load.':'Open the application form. MeshJob will detect fields as they appear.','meta'),
+      state.busy&&el('p',{class:'meta',role:'status'},'Filling this page…'),
+      canStart&&(!embedded||embedAccess)&&el('div',{class:'actions'},button('Fill available fields',task(()=>fillOne()),'primary',{disabled:state.busy||!fields.length||challenge||login||!!receipt}),
+        !state.app&&button('Prepare application',task(prepare),'quiet',{disabled:state.busy}),
+        state.app&&prepareRows&&button('Add missing rows and fill',task(()=>fillOne({rows:true})),'',{disabled:state.busy||challenge}),
+        registration&&button('Fill registration credentials',task(async()=>{
+          const r=await rpc('form:registration',pageRef());
+          toast(r.count?r.count+' registration fields filled.':'No empty registration fields were filled.');
+        }),'',{disabled:state.busy||challenge}),
         button('Scan again',task(()=>scan()),'',{disabled:state.busy}),state.busy&&button('Stop fill',task(stopFill)))),
+    showMaterials&&section('Application materials',filePicker('resume','Resume PDF'),filePicker('cover','Cover letter PDF'),
+      reference('cover')?.text&&button(state.coverText?'Review approved cover letter text':'Review cover letter text',coverPreview,'quiet')),
     state.result&&resultView(state.result),
     state.app&&state.result?.unresolved?.length>0&&section('Optional Claude suggestions',
       paragraph('Only field labels, options and relevant facts are sent for suggestions. Review each value before applying it.','meta'),
@@ -370,7 +423,7 @@ function pageTransition(id,url) {
   if(state.busy&&!differentJob)return;
   if(state.busy) {
     state.cancelled=true;
-    void rpc('form:stop',{tabId:state.tab.id}).catch(()=>{});
+    void rpc('form:stop',{tabId:state.tab.id,documentId:state.inspection?.formDocumentId}).catch(()=>{});
   }
   activeTab=id;
   ++state.revision;
